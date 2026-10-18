@@ -10,7 +10,7 @@
  *   children  : dialog body content
  *   footer    : ReactNode — rendered below body
  */
-import { useEffect, useRef, useCallback } from 'react'
+import { useEffect, useRef, useCallback, useId } from 'react'
 import { X } from 'lucide-react'
 import { createPortal } from 'react-dom'
 
@@ -26,7 +26,7 @@ export default function Modal({
   footer,
 }) {
   const dialogRef = useRef(null)
-  const titleId = `modal-title-${useRef(Math.random().toString(36).slice(2)).current}`
+  const titleId = `modal-title-${useId()}`
 
   // Close on Escape
   const handleKeyDown = useCallback(

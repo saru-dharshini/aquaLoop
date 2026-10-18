@@ -1,14 +1,13 @@
 /**
- * AquaLoop — Express Server Entry Point (Phase 1)
+ * AquaLoop — Express Server Entry Point (Phase 2)
  *
- * Phase 1 scope:
- *   - Basic Express setup with CORS, Morgan, rate-limiting
- *   - GET /api/v1/health endpoint
- *   - Environment-variable driven configuration
- *   - No database, no auth, no business logic yet (Phase 2+)
- *
- * Run: npm run dev   (uses node --watch)
- * ENV: Copy .env.example to .env and fill in values
+ * Security enhancements:
+ *   - Production fail-fast startup check via validateEnv()
+ *   - Content-Type enforcement (415 on non-JSON auth requests)
+ *   - Body size limits with clean 413 error handling
+ *   - Helmet security headers
+ *   - MongoDB connection with fallback guidance
+ *   - Cookie parser for HTTP-only JWT auth
  */
 
 import express from 'express'
@@ -16,19 +15,32 @@ import cors from 'cors'
 import morgan from 'morgan'
 import rateLimit from 'express-rate-limit'
 import dotenv from 'dotenv'
+import cookieParser from 'cookie-parser'
+import helmet from 'helmet'
 
-// Load environment variables from .env (never committed)
+import { validateEnv } from './config/env.js'
+import { connectDB, isConnected } from './config/db.js'
+import { requireJsonContent } from './middleware/contentType.js'
+import authRoutes from './routes/authRoutes.js'
+
+// Load environment variables from .env
 dotenv.config()
 
+// ── Startup Environment Validation (Fail Fast) ────────────────
+const envConfig = validateEnv()
+const { isProduction, nodeEnv, port } = envConfig
+
 const app = express()
-const PORT = process.env.PORT || 5000
-const NODE_ENV = process.env.NODE_ENV || 'development'
 
-// ── Middleware ────────────────────────────────────────────────
-// HTTP request logger (compact in production, verbose in dev)
-app.use(morgan(NODE_ENV === 'production' ? 'combined' : 'dev'))
+// ── Security Headers ──────────────────────────────────────────
+app.use(helmet())
 
-// CORS — allow requests from Vite dev server and production client
+// ── Logging ───────────────────────────────────────────────────
+if (nodeEnv !== 'test') {
+  app.use(morgan(isProduction ? 'combined' : 'dev'))
+}
+
+// ── CORS ──────────────────────────────────────────────────────
 const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || 'http://localhost:5173')
   .split(',')
   .map((o) => o.trim())
@@ -36,44 +48,50 @@ const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || 'http://localhost:5173')
 app.use(
   cors({
     origin: (origin, callback) => {
-      // Allow requests with no origin (e.g. curl, mobile apps)
+      // Allow requests with no origin (e.g. curl, test runners, mobile)
       if (!origin || ALLOWED_ORIGINS.includes(origin)) {
         callback(null, true)
       } else {
         callback(new Error(`CORS: origin ${origin} not allowed`))
       }
     },
-    credentials: true, // required for httpOnly cookies (Phase 2)
+    credentials: true, // required for httpOnly cookies
   }),
 )
 
-// Parse incoming JSON bodies
-app.use(express.json({ limit: '10kb' }))
-app.use(express.urlencoded({ extended: true, limit: '10kb' }))
+// ── Cookie Parser ─────────────────────────────────────────────
+app.use(cookieParser(envConfig.cookieSecret))
 
-// Global rate limiter — 200 requests per 15 minutes per IP
-const limiter = rateLimit({
+// ── Request Body Parser (Strict 10kb limit) ────────────────────
+app.use(express.json({ limit: '10kb' }))
+
+// Global rate limiter — 300 requests per 15 minutes per IP
+const globalLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 200,
+  max: 300,
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: 'Too many requests, please try again later.' },
 })
-app.use('/api', limiter)
+app.use('/api', globalLimiter)
 
 // ── Routes ────────────────────────────────────────────────────
 
+// Auth API — strictly requires application/json for state-changing requests
+app.use('/api/v1/auth', requireJsonContent, authRoutes)
+
 /**
  * GET /api/v1/health
- * Returns server status. Used by uptime monitors and CI checks.
- * No authentication required.
+ * Returns server and database status. Used by uptime monitors.
  */
 app.get('/api/v1/health', (_req, res) => {
+  const dbStatus = isConnected() ? 'connected' : 'disconnected'
   res.status(200).json({
     status: 'ok',
     service: 'aqualoop-api',
-    version: '0.1.0',
-    environment: NODE_ENV,
+    version: '0.2.1',
+    environment: nodeEnv,
+    database: dbStatus,
     timestamp: new Date().toISOString(),
     uptime: Math.floor(process.uptime()),
   })
@@ -83,6 +101,7 @@ app.get('/api/v1/health', (_req, res) => {
 app.get('/', (_req, res) => {
   res.status(200).json({
     message: 'AquaLoop API',
+    version: '0.2.1',
     docs: 'See PLAN.md for the full API specification.',
     health: '/api/v1/health',
   })
@@ -99,13 +118,32 @@ app.use((req, res) => {
 // ── Global error handler ──────────────────────────────────────
 // eslint-disable-next-line no-unused-vars
 app.use((err, req, res, _next) => {
+  // CORS error
+  if (err.message && err.message.startsWith('CORS:')) {
+    return res.status(403).json({ error: err.message })
+  }
+
+  // Payload too large (body-parser 10kb limit exceeded)
+  if (err.status === 413 || err.type === 'entity.too.large') {
+    return res.status(413).json({
+      error: 'Payload too large: Request body exceeds the 10kb limit.',
+    })
+  }
+
+  // Malformed JSON body
+  if (err.status === 400 && err instanceof SyntaxError && 'body' in err) {
+    return res.status(400).json({
+      error: 'Malformed JSON payload in request body.',
+    })
+  }
+
   const status = err.status || err.statusCode || 500
   const message =
-    NODE_ENV === 'production' && status === 500
+    isProduction && status === 500
       ? 'Internal server error'
       : err.message || 'Internal server error'
 
-  if (status >= 500) {
+  if (status >= 500 && nodeEnv !== 'test') {
     console.error('[ERROR]', err)
   }
 
@@ -113,14 +151,18 @@ app.use((err, req, res, _next) => {
 })
 
 // ── Start ─────────────────────────────────────────────────────
-app.listen(PORT, () => {
-  console.log(`
+// Only start listening if not running in a test environment
+if (nodeEnv !== 'test') {
+  connectDB()
+  app.listen(port, () => {
+    console.log(`
   ╭─────────────────────────────────────╮
-  │  AquaLoop API — ${NODE_ENV.padEnd(12)}       │
-  │  Listening on http://localhost:${PORT}  │
+  │  AquaLoop API — ${nodeEnv.padEnd(12)}       │
+  │  Listening on http://localhost:${port}  │
   │  Health: /api/v1/health             │
   ╰─────────────────────────────────────╯
   `)
-})
+  })
+}
 
 export default app

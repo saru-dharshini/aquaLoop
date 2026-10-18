@@ -13,6 +13,7 @@ import StatCard from '../components/ui/StatCard.jsx'
 import XPBar from '../components/ui/XPBar.jsx'
 import Avatar from '../components/ui/Avatar.jsx'
 import Badge from '../components/ui/Badge.jsx'
+import { useAuth } from '../context/AuthContext.jsx'
 
 const SIDEBAR_LINKS = [
   { to: '/dashboard',   label: 'Overview',    icon: LayoutDashboard },
@@ -41,6 +42,8 @@ const SAMPLE_USER = {
 
 export default function Dashboard() {
   const [sidebarOpen, setSidebarOpen] = useState(true)
+  const { user } = useAuth()
+  const currentUser = user || SAMPLE_USER
 
   return (
     <div style={{ display: 'flex', minHeight: '100%' }}>
@@ -70,28 +73,32 @@ export default function Dashboard() {
         >
           <span aria-hidden="true" style={{ fontSize: '1.1rem' }}>⚠️</span>
           <p style={{ fontSize: 'var(--text-sm)', color: '#8d6e00', margin: 0, lineHeight: 'var(--leading-snug)' }}>
-            <strong>Phase 1 — static layout only.</strong> All data shown here is sample data. Live data and real actions require sign-in, which connects in Phase 2.
+            <strong>Phase 2 active:</strong> Authentication is live. Actions, missions, and XP logging will be connected to the backend in Phase 3.
           </p>
-          <Badge variant="sample" style={{ flexShrink: 0 }}>Sample data</Badge>
+          <Badge variant={user ? 'success' : 'sample'} style={{ flexShrink: 0 }}>
+            {user ? 'Authenticated' : 'Demo preview'}
+          </Badge>
         </div>
 
         {/* Profile + XP */}
         <div className="card" style={{ padding: 'var(--space-6)' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-4)', flexWrap: 'wrap' }}>
-            <Avatar name={SAMPLE_USER.username} size="lg" ring />
+            <Avatar name={currentUser.username} size="lg" ring />
             <div style={{ flex: 1, minWidth: 200 }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)', marginBottom: 'var(--space-1)' }}>
                 <h2 style={{ fontFamily: 'var(--font-heading)', fontSize: 'var(--text-xl)', margin: 0 }}>
-                  {SAMPLE_USER.username}
+                  {currentUser.username}
                 </h2>
-                <Badge variant="primary">Citizen</Badge>
-                {SAMPLE_USER.streak >= 3 && (
+                <Badge variant={currentUser.role === 'admin' ? 'navy' : 'primary'}>
+                  {currentUser.role === 'admin' ? 'Admin' : 'Citizen'}
+                </Badge>
+                {currentUser.streak >= 3 && (
                   <Badge variant="gold" icon={Zap}>
-                    {SAMPLE_USER.streak}d streak
+                    {currentUser.streak}d streak
                   </Badge>
                 )}
               </div>
-              <XPBar xp={SAMPLE_USER.xp} level={SAMPLE_USER.level} xpToNext={SAMPLE_USER.xpToNext} />
+              <XPBar xp={currentUser.xp || 0} level={currentUser.level || 1} xpToNext={currentUser.xpToNext || 280} />
             </div>
           </div>
         </div>

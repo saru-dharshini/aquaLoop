@@ -24,7 +24,6 @@ const MEDAL_COLORS = { 1: '#FFD700', 2: '#C0C0C0', 3: '#CD7F32' }
 
 export default function Leaderboard() {
   const top3 = SAMPLE_LEADERS.slice(0, 3)
-  const rest  = SAMPLE_LEADERS.slice(3)
 
   return (
     <div className="container page-enter" style={{ paddingBlock: 'var(--space-12)' }}>

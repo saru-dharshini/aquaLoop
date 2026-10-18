@@ -1,22 +1,23 @@
 /**
- * AuthContext — Phase 1 stub
+ * AuthContext — AquaLoop Phase 2
  *
- * Provides authentication state throughout the app.
- * In Phase 1: always returns unauthenticated (no API calls).
- * Phase 2 will implement JWT / cookie auth against /api/v1/auth.
+ * Provides real authentication state throughout the app.
  *
- * NOTE: JWT is stored in an httpOnly cookie set by the server.
- *       The client NEVER reads or writes JWT directly.
- *       The client NEVER stores XP or role values for trust.
+ * Security architecture:
+ *   - JWT is stored exclusively in an HTTP-only cookie by the server.
+ *   - The client NEVER reads, writes, or stores JWT tokens in localStorage or sessionStorage.
+ *   - Session restoration occurs on mount via GET /api/v1/auth/me.
+ *   - All user stats, XP, and roles are server-computed and trusted only from the server.
  */
-import { createContext, useContext, useReducer, useCallback } from 'react'
+import { createContext, useContext, useReducer, useEffect, useCallback } from 'react'
+import api from '../services/api.js'
 
 const AuthContext = createContext(null)
 
 const initialState = {
-  user: null,        // { _id, username, email, role, level, xp, badges, ... }
+  user: null,          // { _id, username, email, role, level, xp, streak, badges, ... }
   isAuthenticated: false,
-  isLoading: false,  // true during /auth/me check on mount (Phase 2)
+  isLoading: true,     // Initial check in progress
   error: null,
 }
 
@@ -25,13 +26,31 @@ function authReducer(state, action) {
     case 'AUTH_LOADING':
       return { ...state, isLoading: true, error: null }
     case 'AUTH_SUCCESS':
-      return { ...state, user: action.payload, isAuthenticated: true, isLoading: false, error: null }
+      return {
+        ...state,
+        user: action.payload,
+        isAuthenticated: true,
+        isLoading: false,
+        error: null,
+      }
     case 'AUTH_FAILURE':
-      return { ...state, user: null, isAuthenticated: false, isLoading: false, error: action.payload }
+      return {
+        ...state,
+        user: null,
+        isAuthenticated: false,
+        isLoading: false,
+        error: action.payload || null,
+      }
     case 'AUTH_LOGOUT':
-      return { ...initialState }
+      return {
+        ...initialState,
+        isLoading: false,
+      }
     case 'UPDATE_USER':
-      return { ...state, user: { ...state.user, ...action.payload } }
+      return {
+        ...state,
+        user: state.user ? { ...state.user, ...action.payload } : null,
+      }
     default:
       return state
   }
@@ -40,28 +59,100 @@ function authReducer(state, action) {
 export function AuthProvider({ children }) {
   const [state, dispatch] = useReducer(authReducer, initialState)
 
-  // Phase 2: replace stubs with real Axios calls
-  const login = useCallback(async (_credentials) => {
-    // TODO Phase 2: POST /api/v1/auth/login → server sets httpOnly cookie
-    dispatch({ type: 'AUTH_FAILURE', payload: 'Auth not implemented yet (Phase 2)' })
+  /**
+   * Check existing session on mount
+   */
+  const checkSession = useCallback(async () => {
+    try {
+      const response = await api.get('/auth/me')
+      if (response.data?.user) {
+        dispatch({ type: 'AUTH_SUCCESS', payload: response.data.user })
+      } else {
+        dispatch({ type: 'AUTH_FAILURE', payload: null })
+      }
+    } catch {
+      // 401 or network error on mount means unauthenticated guest
+      dispatch({ type: 'AUTH_FAILURE', payload: null })
+    }
   }, [])
 
-  const register = useCallback(async (_data) => {
-    // TODO Phase 2: POST /api/v1/auth/register
-    dispatch({ type: 'AUTH_FAILURE', payload: 'Auth not implemented yet (Phase 2)' })
+  useEffect(() => {
+    checkSession()
+  }, [checkSession])
+
+  /**
+   * Log in with email and password
+   */
+  const login = useCallback(async ({ email, password }) => {
+    dispatch({ type: 'AUTH_LOADING' })
+    try {
+      const response = await api.post('/auth/login', { email, password })
+      const user = response.data.user
+      dispatch({ type: 'AUTH_SUCCESS', payload: user })
+      return { success: true, user }
+    } catch (err) {
+      const message = err.userMessage || 'Sign in failed. Please check your credentials.'
+      dispatch({ type: 'AUTH_FAILURE', payload: message })
+      return { success: false, error: message }
+    }
   }, [])
 
+  /**
+   * Register a new citizen account
+   */
+  const register = useCallback(async ({ username, email, password }) => {
+    dispatch({ type: 'AUTH_LOADING' })
+    try {
+      const response = await api.post('/auth/register', { username, email, password })
+      const user = response.data.user
+      dispatch({ type: 'AUTH_SUCCESS', payload: user })
+      return { success: true, user }
+    } catch (err) {
+      const message = err.userMessage || 'Registration failed. Please check your details.'
+      dispatch({ type: 'AUTH_FAILURE', payload: message })
+      return { success: false, error: message }
+    }
+  }, [])
+
+  /**
+   * Sign out and clear server-side HTTP-only cookie
+   */
   const logout = useCallback(async () => {
-    // TODO Phase 2: POST /api/v1/auth/logout → server clears cookie
-    dispatch({ type: 'AUTH_LOGOUT' })
+    try {
+      await api.post('/auth/logout')
+    } catch (err) {
+      console.warn('Logout request failed on server:', err.message)
+    } finally {
+      dispatch({ type: 'AUTH_LOGOUT' })
+    }
   }, [])
 
+  /**
+   * Refresh current user data from server (e.g. after action or profile change)
+   */
   const refreshUser = useCallback(async () => {
-    // TODO Phase 2: GET /api/v1/auth/me → update user from server
+    try {
+      const response = await api.get('/auth/me')
+      if (response.data?.user) {
+        dispatch({ type: 'AUTH_SUCCESS', payload: response.data.user })
+      }
+    } catch (err) {
+      if (err.response?.status === 401) {
+        dispatch({ type: 'AUTH_LOGOUT' })
+      }
+    }
   }, [])
 
   return (
-    <AuthContext.Provider value={{ ...state, login, register, logout, refreshUser }}>
+    <AuthContext.Provider
+      value={{
+        ...state,
+        login,
+        register,
+        logout,
+        refreshUser,
+      }}
+    >
       {children}
     </AuthContext.Provider>
   )

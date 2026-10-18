@@ -13,15 +13,25 @@
  */
 import { useEffect, useRef, useState } from 'react'
 
+const LEVEL_DATA = {
+  1: { name: 'Droplet', startXP: 0, spanXP: 500 },
+  2: { name: 'Stream', startXP: 500, spanXP: 1000 },
+  3: { name: 'River', startXP: 1500, spanXP: 2000 },
+  4: { name: 'Ocean Guardian', startXP: 3500, spanXP: 0 },
+}
+
 export default function XPBar({
   xp = 0,
   level = 1,
-  xpToNext = 100,
   showLabel = true,
   compact = false,
 }) {
-  const xpInCurrentLevel = Math.max(0, xp - levelStartXP(level))
-  const fraction = xpToNext > 0 ? Math.min(xpInCurrentLevel / xpToNext, 1) : 0
+  const currentTier = LEVEL_DATA[level] || LEVEL_DATA[1]
+  const isMaxLevel = level >= 4
+
+  const xpInCurrentLevel = isMaxLevel ? Math.max(0, xp - 3500) : Math.max(0, xp - currentTier.startXP)
+  const xpToNext = currentTier.spanXP
+  const fraction = isMaxLevel ? 1 : xpToNext > 0 ? Math.min(xpInCurrentLevel / xpToNext, 1) : 0
   const pct = Math.round(fraction * 100)
 
   // Animate the bar width on mount / change
@@ -42,7 +52,7 @@ export default function XPBar({
         gap: compact ? 'var(--space-2)' : 'var(--space-1)',
       }}
       role="group"
-      aria-label={`Level ${level}, ${xpInCurrentLevel} of ${xpToNext} XP`}
+      aria-label={`Level ${level} (${currentTier.name}), ${xpInCurrentLevel} of ${xpToNext} XP`}
     >
       {showLabel && (
         <div
@@ -63,11 +73,11 @@ export default function XPBar({
               whiteSpace: 'nowrap',
             }}
           >
-            Lv {level}
+            Lv {level} · {currentTier.name}
           </span>
           {!compact && (
             <span style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)' }}>
-              {xpInCurrentLevel} / {xpToNext} XP
+              {isMaxLevel ? `${xp} XP (Master)` : `${xpInCurrentLevel} / ${xpToNext} XP`}
             </span>
           )}
         </div>
@@ -102,15 +112,4 @@ export default function XPBar({
       </div>
     </div>
   )
-}
-
-/**
- * Returns the XP total at the START of a given level.
- * Formula: level = floor((xp/100)^0.75) + 1  (pending approval — see PLAN.md §6.5)
- * Inverse: xp_start(level) = ((level - 1) / 1)^(1/0.75) * 100
- * Placeholder until game-economy values are approved.
- */
-function levelStartXP(level) {
-  if (level <= 1) return 0
-  return Math.round(Math.pow(level - 1, 1 / 0.75) * 100)
 }

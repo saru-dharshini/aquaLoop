@@ -81,3 +81,40 @@ export function requireRole(...roles) {
     next()
   }
 }
+
+/**
+ * Middleware: Attaches req.user if a valid token is present; otherwise proceeds as guest
+ */
+export async function optionalAuth(req, res, next) {
+  try {
+    let token = req.cookies?.[COOKIE_NAME]
+    if (!token && req.headers.authorization?.startsWith('Bearer ')) {
+      token = req.headers.authorization.split(' ')[1]
+    }
+
+    if (!token) {
+      req.user = null
+      return next()
+    }
+
+    let decoded
+    try {
+      decoded = verifyToken(token)
+    } catch {
+      req.user = null
+      return next()
+    }
+
+    if (!isConnected()) {
+      req.user = null
+      return next()
+    }
+
+    const user = await User.findById(decoded.id).select(User.publicFields())
+    req.user = user || null
+    next()
+  } catch {
+    req.user = null
+    next()
+  }
+}

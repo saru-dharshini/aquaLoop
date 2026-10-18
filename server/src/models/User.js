@@ -81,11 +81,47 @@ const userSchema = new mongoose.Schema(
         earnedAt: { type: Date, default: Date.now },
       },
     ],
+    streakFreezes: {
+      type: Number,
+      default: 0,
+      min: 0,
+      max: 2,
+    },
+    lastActiveDateIST: {
+      type: String,
+      default: null,
+    },
+    claimedStreakMilestones: [
+      {
+        type: Number,
+      },
+    ],
+    city: {
+      type: String,
+      default: null,
+      trim: true,
+    },
+    isSample: {
+      type: Boolean,
+      default: false,
+    },
+
+    // ── Durable Idempotency Tracking for Ledger Projection ───────
+    recentTxIds: [
+      {
+        type: mongoose.Schema.Types.ObjectId,
+      },
+    ],
+    lastAppliedTxId: {
+      type: mongoose.Schema.Types.ObjectId,
+      default: null,
+    },
 
     // ── Aggregate stats — labelled "self-reported" where appropriate
-    totalWaterSavedLitres: { type: Number, default: 0 },
-    actionsLogged:         { type: Number, default: 0 },
-    reportsSubmitted:      { type: Number, default: 0 },
+    totalWaterSavedLitres:    { type: Number, default: 0 },
+    verifiedWaterSavedLitres: { type: Number, default: 0 },
+    actionsLogged:            { type: Number, default: 0 },
+    reportsSubmitted:         { type: Number, default: 0 },
   },
   {
     timestamps: true,   // adds createdAt, updatedAt

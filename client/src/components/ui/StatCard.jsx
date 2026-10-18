@@ -48,8 +48,11 @@ export default function StatCard({
           </div>
         )}
         {honesty && (
-          <Badge variant={honesty === 'sample' ? 'sample' : 'self-reported'} size="sm">
-            {honesty === 'sample' ? 'Sample data' : 'Self-reported'}
+          <Badge
+            variant={honesty === 'sample' ? 'sample' : honesty === 'verified' ? 'success' : 'self-reported'}
+            size="sm"
+          >
+            {honesty === 'sample' ? 'Sample data' : honesty === 'verified' ? 'Verified' : 'Self-reported'}
           </Badge>
         )}
       </div>

@@ -2,20 +2,40 @@
 
 > **Last Updated:** 2026-10-18
 > **Canonical Root:** `C:\Users\HP\OneDrive\Desktop\aquaLoop`
-> **Current Phase:** Phase 2 — Database, Authentication, and Security Hardening (COMPLETE — awaiting user approval to stage/commit)
-> **Next Phase Gate:** Phase 3 — Core Gamification: Actions, XP, Badges, and Leaderboard (requires explicit user approval)
+> **Current Phase:** Phase 3B — Core Gamification Implementation (COMPLETED & VERIFIED)
+> **Next Phase Gate:** Phase 4 — Civic Water Issue Reporting & Interactive Map (requires user review and approval)
+> **Latest Git Commit:** `6357da6` (`feat: secure authentication and database foundation`)
 
 ---
 
 ## Current Project State
 
-Phase 2 is **fully implemented, security-hardened, and verified**. All 4 approved security fixes have been implemented:
-1. Insecure production fallback secrets are eliminated via a fail-fast environment validation module (`validateEnv`).
-2. Authentication endpoints strictly reject non-JSON (e.g. urlencoded) payloads with `415 Unsupported Media Type` to block form-based CSRF vectors.
-3. JWT verification is pinned explicitly to `HS256`.
-4. Comprehensive security edge-case tests (expired tokens, foreign signatures, 415 media types, 413 oversized payloads, production env assertions) are in place.
+Phase 3B (Core Gamification) is **fully implemented and verified**. All backend services, data models, concurrency controls, anti-abuse mechanisms, and frontend views have been connected to live endpoints and tested with 43 passing automated tests.
 
-All **23 backend integration tests pass**. The frontend builds cleanly (0 errors), and the linter passes with 0 errors.
+Key Highlights:
+1. **Crash-Resistant XP Engine on Standalone MongoDB:**
+   - Dedicated `XPTransaction` immutable ledger serves as the single source of truth with unique compound idempotency keys (`{ idempotencyKey: 1 }`).
+   - Atomic reservation pipeline on `UserDailyXP` (`$expr`, `$min`, `$subtract`) enforces the 300 XP daily cap under high concurrency without requiring multi-document ACID transactions.
+   - Durable idempotency guard (`User.recentTxIds: { $ne: txId }` combined with immutable ledger sum checks) prevents duplicate XP balance application during crashes or concurrent recovery passes.
+   - Distributed recovery leasing (`recoveryLeaseExpiresAt`, `recoveryWorkerId`) protects in-flight awards from premature reservation reclaims.
+2. **Approved Mission Catalogue & Server-Validated Literacy Quizzes:**
+   - 11 initial missions seeded (3 literacy quizzes, 6 home action missions, 2 civic reporting missions).
+   - Quiz answer validation performed exclusively on the server (`correctOptionIndex` protected via `select: false`).
+   - Anti-guessing 1-hour retry cooldown enforced on failed attempts (< 80%).
+3. **Actions & Environmental Honesty:**
+   - Strict segregation: Claimed water savings are tagged as `self_reported` until explicit admin verification.
+   - Admin photo proof verification credits `verifiedLitres` and awards cap-exempt bonus XP (`isCapExempt: true`).
+   - Daily habit anti-farming checks restrict daily habit submissions to 1 per IST calendar day.
+4. **Streaks, Daily Bonus, & Badges:**
+   - Indian Standard Time (`Asia/Kolkata`) day boundaries computed natively.
+   - Streak freeze mechanic allows citizens to hold up to 2 freezes, earned at 7-day milestones. Anti-farming prevents re-earning milestone freezes on deliberate streak resets.
+   - Daily bonus endpoint (`POST /api/v1/game/daily-bonus`) awards 10–25 XP random uniform roll within the 300 XP daily cap.
+   - 10 platform achievement badges seeded and evaluated atomically with unique compound index `{ userId: 1, badgeSlug: 1 }`.
+5. **Frontend Integration:**
+   - `Dashboard.jsx`: Live authenticated view displaying real user XP, tier level, IST streak, streak freezes, self-reported vs. verified litres saved, "+ Log Action" modal, interactive literacy quiz modal, and badges showcase.
+   - `XPBar.jsx`: 4 approved tiers (Droplet 0–499, Stream 500–1,499, River 1,500–3,499, Ocean Guardian 3,500+).
+   - `Leaderboard.jsx`: Connected to `/api/v1/leaderboard` with city filtering, pagination, podium cards, and `[Sample Data]` badges.
+   - `StatCard.jsx`: Updated with verified honesty badge support.
 
 ---
 
@@ -35,201 +55,142 @@ All **23 backend integration tests pass**. The frontend builds cleanly (0 errors
 - [x] 8 page routes scaffolded and 11 UI components created
 
 ### Phase 2 — Database, Authentication & Security Hardening ✅
+- [x] Mongoose connection with local MongoDB Community Server fallback
+- [x] User model with bcrypt password hashing (12 rounds) and safe JSON projections
+- [x] Fast-fail production environment validation (`server/src/config/env.js`)
+- [x] Content-Type enforcement (`415 Unsupported Media Type` for non-JSON)
+- [x] HS256 algorithm pinning & HTTP-only cookie session management
+- [x] Rate limiting on auth endpoints (15/hr register, 20/15min login)
+- [x] RBAC enforcement middleware (`requireRole`)
+- [x] Client AuthContext with automatic session restore on mount
 
-#### Backend (`server/`)
-- [x] **Database connection (`server/src/config/db.js`)**: Mongoose 8+ connection supporting both local MongoDB Community Server (`mongodb://localhost:27017/aqualoop`) and MongoDB Atlas M0. Clear startup error and setup instructions if DB is unreachable without crashing the server.
-- [x] **User model (`server/src/models/User.js`)**:
-  - Validated fields: `username` (3–30 chars, alphanumeric/underscore), `email` (normalized lowercase, unique), `passwordHash` (`select: false`, bcrypt hashed with 12 salt rounds)
-  - Role-based control: `role: 'citizen' | 'admin'` (defaults to `citizen`, assigned server-side only)
-  - Server-controlled game state: `xp`, `level`, `streak`, `badges`, `totalWaterSavedLitres`, `actionsLogged`, `reportsSubmitted`
-  - Safe projection: `toJSON` strips `passwordHash` and `__v`; static `publicFields()` helper
-- [x] **Security Fix 1 — Production Environment Validation (`server/src/config/env.js`)**:
-  - `validateEnv()` fails fast on startup in production if `JWT_SECRET` or `COOKIE_SECRET` is missing, empty, shorter than 32 characters, or matches known insecure defaults (`KNOWN_INSECURE_SECRETS`).
-  - Never prints or leaks secrets in error messages or logs.
-  - Keeps development defaults strictly isolated to `NODE_ENV !== 'production'`.
-- [x] **Security Fix 2 — Content-Type Enforcement (`server/src/middleware/contentType.js`)**:
-  - `requireJsonContent` enforces `Content-Type: application/json` on state-changing requests (`POST`, `PUT`, `PATCH`).
-  - Returns `415 Unsupported Media Type` for URL-encoded forms or unsupported content types.
-  - Prevents cross-origin HTML form POST CSRF attacks.
-- [x] **Security Fix 3 — Algorithm Pinning & Cookie Management (`server/src/utils/jwt.js`)**:
-  - `signToken`: Explicitly specifies `{ algorithm: 'HS256' }`.
-  - `verifyToken`: Explicitly pins `{ algorithms: ['HS256'] }`.
-  - HTTP-only cookie configuration: `httpOnly: true`, `secure: isProduction`, `sameSite: isProduction ? 'strict' : 'lax'`.
-  - `clearAuthCookie`: Clears cookie matching all path and security attributes.
-- [x] **Zod Validation (`server/src/utils/validation.js`)**: `registerSchema` and `loginSchema` with `validateBody` middleware compatible with Zod 4 (`issues` extraction).
-- [x] **Auth Middleware (`server/src/middleware/auth.js`)**:
-  - `requireAuth`: Reads token from HTTP-only cookie (with Bearer fallback for automated testing), verifies JWT, loads active user from database. Returns `401` if missing, invalid, or expired (`TOKEN_EXPIRED`).
-  - `requireRole(...roles)`: Server-enforced RBAC. Returns `403` if user lacks required role.
-- [x] **Rate Limiting (`server/src/middleware/rateLimiter.js`)**: Strict rate limiters on `/register` (max 15/hr) and `/login` (max 20/15min).
-- [x] **Auth Controllers (`server/src/controllers/authController.js`)**:
-  - `POST /api/v1/auth/register`: Duplicate check on email & username, creates user, issues HTTP-only cookie, returns 201 + safe user object.
-  - `POST /api/v1/auth/login`: Validates credentials with bcrypt, uniform error message on bad password or nonexistent email, sets cookie, returns 200 + safe user object.
-  - `POST /api/v1/auth/logout`: Clears HTTP-only cookie, returns 200.
-  - `GET /api/v1/auth/me`: Protected session check, returns 200 + authenticated user profile.
-  - `GET /api/v1/auth/admin-test`: Role-protected test endpoint, confirms admin authorization.
-- [x] **Server Integration (`server/src/index.js`)**:
-  - Startup `validateEnv()` guard.
-  - Security headers via `helmet`.
-  - Body parser with strict 10kb limit and dedicated `413 Payload Too Large` / `400 Malformed JSON` error handlers.
-  - Mounted `requireJsonContent` on `/api/v1/auth`.
-  - `/api/v1/health` reports version and database connectivity status.
-- [x] **Demo Seed Script (`server/src/scripts/seed.js`)**: Safely creates demo citizen (`citizen@aqualoop.local` / `DemoCitizen123!`) and demo admin (`admin@aqualoop.local` / `DemoAdmin123!`). Blocks execution in production.
+### Phase 3A — Game Economy Specification & Planning ✅
+- [x] Comprehensive architecture specification (`GAME_ECONOMY.md`)
+- [x] Approved decisions D1–D5
+- [x] Concurrency and crash recovery design for standalone MongoDB
+- [x] Anti-farming and anti-guessing mechanisms
 
-#### Frontend (`client/`)
-- [x] **Centralized API Client (`client/src/services/api.js`)**: Axios instance with `baseURL: '/api/v1'`, `withCredentials: true`, and automatic response error normalization.
-- [x] **Live AuthContext (`client/src/context/AuthContext.jsx`)**:
-  - Replaced stubs with real API integration: `login`, `register`, `logout`, `refreshUser`.
-  - Automatic session restoration: Calls `GET /auth/me` on mount; silently falls back to guest if no session.
-  - Strict security: Tokens are NEVER stored in localStorage or sessionStorage.
-- [x] **Login Page (`client/src/pages/Login.jsx`)**: Connected to real `login()`, shows loading spinner on button, displays field errors and backend alert banners, redirects to return URL upon sign-in.
-- [x] **Register Page (`client/src/pages/Register.jsx`)**: Connected to real `register()`, client-side regex checks, handles duplicate conflicts, redirect to `/dashboard`.
-- [x] **Navbar (`client/src/components/layout/Navbar.jsx`)**: Dynamically shows username, Avatar, Dashboard link, and Sign Out button when authenticated; shows Sign In & Get Started when guest.
-- [x] **Dashboard (`client/src/pages/Dashboard.jsx`)**: Displays authenticated user's real username, role badge, XP, level, and streak; falls back to demo values if unauthenticated.
-- [x] **Component fixes**: Updated `Modal.jsx` to use React's `useId()` for cleaner accessibility; removed unused variable in `Leaderboard.jsx`.
+### Phase 3B — Core Gamification Implementation ✅
+
+#### Backend Models (`server/src/models/`)
+- [x] **`XPTransaction.js`**: Immutable ledger with unique compound idempotency key index (`{ idempotencyKey: 1 }`), state machine (`PENDING_RESERVATION`, `RESERVED`, `COMMITTED`, `ABORTED`), and recovery lease fields.
+- [x] **`UserDailyXP.js`**: Daily XP tracker in `Asia/Kolkata` with atomic `$expr` update pipeline guaranteeing 300 XP cap.
+- [x] **`Mission.js`**: 11 missions with protected quiz answer indices (`select: false`).
+- [x] **`UserMission.js`**: Tracks completion status, percentage score, and 1-hour anti-guessing cooldown (`retryAvailableAt`).
+- [x] **`Action.js`**: Tracks water-saving actions, claimed vs. verified litres, verification status, and photo proof URLs.
+- [x] **`Badge.js` & `UserBadge.js`**: 10 platform achievement badges with unique compound index `{ userId: 1, badgeSlug: 1 }`.
+- [x] **`User.js`**: Extended with `streakFreezes`, `lastActiveDateIST`, `claimedStreakMilestones`, `verifiedWaterSavedLitres`, `isSample`, `city`, and bounded `recentTxIds`.
+
+#### Backend Services (`server/src/services/`)
+- [x] **`xpLedgerService.js`**: Atomic single-document reservation pipeline, durable balance projection, crash recovery (`reconcileUserXP`), and disaster recovery rebuild (`rebuildUserXPProjection`).
+- [x] **`missionService.js`**: Seeds default missions, computes quiz score ($\ge 80\%$), hides answers, enforces 1-hour retry cooldown.
+- [x] **`actionService.js`**: Action logging, daily habit rate limiting (1/day IST), admin verification with bonus XP (`isCapExempt: true`), updates verified water litres.
+- [x] **`streakService.js`**: IST calendar day calculations, streak increments, streak freezes (max 2), milestone awards, and 10–25 XP daily bonus roll.
+- [x] **`badgeService.js`**: Seeds 10 badges, evaluates unlock conditions atomically without duplicates.
+- [x] **`leaderboardService.js`**: Deterministic multi-key sort (`xp: -1`, `streak: -1`, `createdAt: 1`, `_id: 1`), pagination, city filter, sample data exclusion.
+
+#### Backend Routes & Controllers (`server/src/controllers/`, `server/src/routes/`)
+- [x] `missionController.js` & `missionRoutes.js`: `GET /api/v1/missions`, `GET /api/v1/missions/:slug`, `POST /api/v1/missions/:slug/quiz`
+- [x] `actionController.js` & `actionRoutes.js`: `POST /api/v1/actions`, `GET /api/v1/actions/my`, `PATCH /api/v1/actions/:id/verify`
+- [x] `gameController.js` & `gameRoutes.js`: `POST /api/v1/game/daily-bonus`, `GET /api/v1/game/badges`, `GET /api/v1/game/badges/my`, `GET /api/v1/game/leaderboard`, `GET /api/v1/leaderboard`
+
+#### Frontend Components & Views (`client/src/`)
+- [x] **`Dashboard.jsx`**: Fully wired to live gamification APIs:
+  - Real user XP, tier level, IST streak, and streak freezes
+  - "Claim Daily Bonus" button with instant toast feedback and user state refresh
+  - "+ Log Action" modal with mission dropdown, claimed litres, and photo proof URL
+  - Interactive literacy quiz modal with radio option selector and pass/fail feedback
+  - Conservation actions ledger table displaying claimed vs. verified litres and status badges
+  - Achievements and badges showcase displaying unlocked vs. locked badges
+  - Guest demo preview mode with sample data notice
+- [x] **`XPBar.jsx`**: 4 approved level tiers and progress calculation.
+- [x] **`Leaderboard.jsx`**: Live `/api/v1/leaderboard` connection with city dropdown, podium cards, pagination, and `[Sample Data]` badges.
+- [x] **`StatCard.jsx`**: Added support for `honesty="verified"` badge.
 
 ---
 
 ## Verification and Test Results
 
-### 1. Backend Integration Tests (Vitest + Supertest + MongoMemoryServer)
+### 1. Backend Integration Test Suite (Vitest + MongoMemoryServer)
 Command: `npm test` inside `server/`
 ```
+ ✓ tests/xpLedger.test.js (12 tests)
+   ✓ Daily Cap & Idempotency Enforcement (3)
+     ✓ enforces exact partial award down to cap ceiling and flags dailyCapped
+     ✓ allows cap-exempt admin verification bonuses to exceed daily cap
+     ✓ rejects duplicate requests and returns idempotent cached results
+   ✓ High-Concurrency Stress Tests (2)
+     ✓ prevents daily cap overflow when 10 requests compete for 20 XP headroom in parallel
+     ✓ safely handles concurrent identical duplicate submissions without race conditions
+   ✓ Crash Recovery & Projection Rebuild (7)
+     ✓ safely recovers a crash occurring after ledger creation (Step 1 crash)
+     ✓ safely recovers orphaned reservation when crash occurs between reservation and state write (Step 1.5 crash) and restores capacity
+     ✓ concurrent recovery workers acquire distributed lease and never double-apply
+     ✓ safely recovers a crash occurring after reservation placed (Step 2 crash)
+     ✓ guarantees balance is never incremented twice if crash occurred after user update (Step 3 crash)
+     ✓ runs repeatedly with complete idempotency
+     ✓ deterministically rebuilds user projection from immutable ledger in disaster recovery
+ ✓ tests/gamification.test.js (11 tests)
+   ✓ Missions & Quizzes API (3)
+     ✓ handles failing quiz: awards 0 XP, hides answers, and enforces 1-hour retry cooldown
+     ✓ handles passing quiz: awards base XP, marks completed, and blocks retrying completed quiz
+   ✓ Actions & Admin Verification API (3)
+     ✓ logs a daily habit action and prevents duplicate logging on same day
+     ✓ rejects quiz submission when answers is not an array (schema enforcement)
+     ✓ marks actions with photo proof as pending_verification and enforces admin verification with explicit verifiedLitres
+   ✓ Daily Bonus, Badges, and Leaderboard API (3)
+     ✓ awards daily bonus (10–25 XP) and rejects multiple claims on the same day
+     ✓ automatically awards first-drop badge on first action logged without duplicates
+     ✓ returns leaderboard with correct ranking, tie-breaking, and sample data exclusion
+   ✓ Streaks & Timezone / Milestone Edge Cases (2)
+     ✓ correctly increments streak across IST midnight boundary (23:59:58 to 00:00:02)
+     ✓ prevents re-claiming streak milestone rewards and freezes after deliberate streak reset
  ✓ tests/auth.test.js (23 tests)
    ✓ POST /api/v1/auth/register (4)
-     ✓ registers a new citizen successfully with HTTP-only cookie and safe payload
-     ✓ rejects registration with duplicate email with 409 Conflict
-     ✓ rejects registration with duplicate username with 409 Conflict
-     ✓ validates input fields (short password, bad email, short username)
    ✓ POST /api/v1/auth/login (3)
-     ✓ signs in successfully with correct credentials and returns HTTP-only cookie
-     ✓ rejects incorrect password with 401 Unauthorized
-     ✓ rejects non-existent email with uniform 401 Unauthorized
    ✓ POST /api/v1/auth/logout (1)
-     ✓ clears auth cookie on logout
    ✓ GET /api/v1/auth/me (Protected Route) (3)
-     ✓ returns 401 when no auth cookie is present
-     ✓ returns user profile when authenticated with cookie
-     ✓ returns 401 when invalid token provided
    ✓ Role-based Access Control (requireRole) (2)
-     ✓ denies citizen user access to admin-only test endpoint with 403
-     ✓ grants admin user access to admin-only endpoint with 200
    ✓ Security Edge Cases: Token Expiry & Tampering (2)
-     ✓ rejects expired JWT token with 401 and code TOKEN_EXPIRED
-     ✓ rejects JWT signed with an untrusted or foreign secret
    ✓ Security Edge Cases: Content-Type & Payload Limits (2)
-     ✓ rejects non-JSON Content-Type (e.g. form urlencoded) on state-changing requests with 415
-     ✓ rejects oversized JSON payload exceeding 10kb limit with 413
    ✓ Security Edge Cases: Production Environment Validation (6)
-     ✓ fails fast when JWT_SECRET is missing in production
-     ✓ fails fast when JWT_SECRET matches a known insecure default in production
-     ✓ fails fast when JWT_SECRET is shorter than 32 characters in production
-     ✓ fails fast when COOKIE_SECRET is missing or default in production
-     ✓ passes validation when valid 32+ character secrets are supplied in production
-     ✓ permits default fallbacks in development without throwing
 
- Test Files  1 passed (1)
-      Tests  23 passed (23)
+ Test Files  3 passed (3)
+      Tests  48 passed (48)
+   Duration  10.28s
 ```
 
 ### 2. Frontend Production Build (Vite)
 Command: `npm run build` inside `client/`
 ```
-✓ 2038 modules transformed.
+✓ 2039 modules transformed.
 dist/index.html                   1.24 kB │ gzip:   0.65 kB
 dist/assets/index-Qd3aQSeD.css   14.50 kB │ gzip:   3.51 kB
-dist/assets/index-BiuSYthP.js   411.73 kB │ gzip: 126.31 kB
-✓ built in 780ms — 0 errors
+dist/assets/index-CI9mtXVP.js   437.21 kB │ gzip: 131.85 kB
+✓ built in 1.02s — 0 errors
 ```
 
 ### 3. Frontend Lint (Oxlint)
 Command: `npm run lint` inside `client/`
 ```
-Found 0 errors (4 fast-refresh / purity stylistic hints).
-Finished in 31ms on 26 files.
+Found 0 errors. Finished in 55ms on 26 files.
 ```
 
-### 4. Live Server Endpoints (PowerShell Invoke-RestMethod)
-- `GET http://localhost:5000/api/v1/health` → Status 200 OK:
-  ```json
-  {
-    "status": "ok",
-    "service": "aqualoop-api",
-    "version": "0.2.1",
-    "environment": "development",
-    "database": "disconnected",
-    "uptime": 16
-  }
-  ```
-- `POST http://localhost:5000/api/v1/auth/login` with `application/x-www-form-urlencoded` → Status 415 Unsupported Media Type:
-  ```json
-  {
-    "error": "Unsupported Media Type: Request Content-Type must be application/json."
-  }
-  ```
-
----
-
-## Files Changed / Created
-
-### New Backend Files:
-- `server/src/config/env.js` — Fail-fast environment validation
-- `server/src/middleware/contentType.js` — 415 Content-Type enforcer
-- `server/src/config/db.js` — Mongoose database connection with fallback instructions
-- `server/src/models/User.js` — User schema, bcrypt pre-save hashing, public projections
-- `server/src/utils/jwt.js` — JWT signing, verification, algorithm pinning, cookie configuration
-- `server/src/utils/validation.js` — Zod registration and login schemas & middleware
-- `server/src/middleware/auth.js` — `requireAuth` and `requireRole` middleware
-- `server/src/middleware/rateLimiter.js` — Express rate limiters for auth endpoints
-- `server/src/controllers/authController.js` — Register, login, logout, me, admin-test controllers
-- `server/src/routes/authRoutes.js` — Express route bindings for `/api/v1/auth`
-- `server/src/scripts/seed.js` — Demo accounts seeding script
-- `server/vitest.config.js` — Vitest configuration for server tests
-- `server/tests/auth.test.js` — Comprehensive in-memory integration test suite (23 tests)
-
-### Modified Backend Files:
-- `server/src/index.js` — Added validateEnv, helmet, cookie-parser, connectDB, requireJsonContent, mounted auth routes
-- `server/package.json` — Added dependencies and test/seed scripts
-- `server/.env.example` — Added local MongoDB default and JWT secrets
-
-### New Frontend Files:
-- `client/src/services/api.js` — Centralized Axios API client with credentials
-
-### Modified Frontend Files:
-- `client/src/context/AuthContext.jsx` — Implemented real session restore, login, register, logout
-- `client/src/pages/Login.jsx` — Connected to real API with loading and error states
-- `client/src/pages/Register.jsx` — Connected to real API with loading and error states
-- `client/src/components/layout/Navbar.jsx` — Dynamic user state, sign-out button
-- `client/src/pages/Dashboard.jsx` — Displays real authenticated user data
-- `client/src/components/ui/Modal.jsx` — Accessible `useId()` update
-- `client/src/pages/Leaderboard.jsx` — Cleaned unused variable
+### 4. Phase 3B Targeted Fixes Applied
+- **Fix 1 (Frontend Quiz Payload):** `Dashboard.jsx` maps `quizAnswers` object to the required array schema `[{ questionId, selectedIndex }]` before posting. Validated via automated test in `gamification.test.js`.
+- **Fix 2 (Orphaned Daily XP Reservation):** `reconcileUserXP` detects orphaned reservations in `UserDailyXP` for transactions remaining in `PENDING_RESERVATION`, decrements `reservedXP` atomically, pulls only its own reservation, and safely restores daily cap headroom without leaking or double-applying. Validated with Step 1.5 crash and concurrent recovery worker tests in `xpLedger.test.js`.
+- **Fix 3 (Environmental Impact Verification):** Removed implicit fallback to citizen's claimed litres in `actionService.js`. Approving an action as verified now strictly requires an explicit, validated non-negative number for `verifiedLitres`, returning `400 Bad Request` if missing or invalid. Validated in `gamification.test.js`.
 
 ---
 
 ## Known Limitations
 
-1. **Local MongoDB daemon not installed on host machine**: `mongod` is not installed as a Windows service on the host. The application starts gracefully and informs the developer how to connect local MongoDB or Atlas M0. All tests run in-memory via `mongodb-memory-server` without requiring a running system service.
-2. **In-memory rate limiting**: Express-rate-limit uses memory stores. Appropriate for single-instance development and ₹0 free hosting.
-3. **Cross-site cookies in Safari/strict third-party cookie environments**: Since Vite dev server runs on port 5173 and Express on port 5000, Vite's reverse proxy (`/api` → `http://localhost:5000`) is used to treat requests as same-origin, ensuring cookies work seamlessly without third-party cookie restrictions.
-
----
-
-## What Did Not Work or Remains Uncertain?
-
-1. **Mongoose 8+ `pre('save')` async callback**: In Mongoose 8+, passing an `async` function to `pre('save')` does not supply a `next` callback. Calling `next()` caused a `TypeError: next is not a function`. Resolved by using a promise-returning async function without the `next` parameter.
-2. **Zod 4 `issues` property**: Zod 4 replaces `result.error.errors` with `result.error.issues`. Fixed `validateBody` middleware to check both `issues` and `errors` for backward and forward compatibility.
-3. **Mongoose index duplicate warning**: Fields marked with `unique: true` in the schema definition automatically create an index. Explicitly calling `userSchema.index({ email: 1 }, { unique: true })` emitted a duplicate index warning. Resolved by removing redundant explicit index calls.
+1. **Local MongoDB standalone replica set requirement**: Standalone local MongoDB Community Server instances do not support multi-document transactions. Concurrency safety is achieved via single-document atomic aggregation update pipelines on `UserDailyXP` and immutable ledger documents.
+2. **In-memory test database vs. persistent database**: All automated tests run against an isolated in-memory MongoDB instance via `mongodb-memory-server`. In local development, the server connects to `mongodb://localhost:27017/aqualoop` or falls back gracefully with setup instructions.
+3. **Geo-tagging and map picker**: Phase 4 will introduce Leaflet geo-pickers and Cloudinary uploads for civic reporting.
 
 ---
 
 ## Next Approved Action
 
-**Awaiting user review and approval to stage and commit Phase 2 & Security Hardening changes.**
-
-Upon approval, the next phase will be:
-**Phase 3 — Core Features: Actions, XP Economy, Streaks, Badges, and Leaderboard**.
-Scope:
-- Finalize game economy values (XP per action category, streak multipliers, level curve).
-- Create `Action` and `Badge` Mongoose models.
-- Implement server-side action submission (`POST /api/v1/actions`) with server-controlled XP award, daily cap, and streak calculation.
-- Implement Leaderboard API (`GET /api/v1/leaderboard`) with pagination and city filtering.
-- Connect client Action logging form and real Leaderboard view.
+**Awaiting user review and acceptance of Phase 3B before proceeding to Phase 4 (Civic Water Issue Reporting & Interactive Map).**

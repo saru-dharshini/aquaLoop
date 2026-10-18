@@ -22,6 +22,10 @@ import { validateEnv } from './config/env.js'
 import { connectDB, isConnected } from './config/db.js'
 import { requireJsonContent } from './middleware/contentType.js'
 import authRoutes from './routes/authRoutes.js'
+import missionRoutes from './routes/missionRoutes.js'
+import actionRoutes from './routes/actionRoutes.js'
+import gameRoutes from './routes/gameRoutes.js'
+import { handleGetLeaderboard } from './controllers/gameController.js'
 
 // Load environment variables from .env
 dotenv.config()
@@ -79,6 +83,12 @@ app.use('/api', globalLimiter)
 
 // Auth API — strictly requires application/json for state-changing requests
 app.use('/api/v1/auth', requireJsonContent, authRoutes)
+
+// Gamification APIs — Phase 3B
+app.use('/api/v1/missions', missionRoutes)
+app.use('/api/v1/actions', actionRoutes)
+app.use('/api/v1/game', gameRoutes)
+app.get('/api/v1/leaderboard', handleGetLeaderboard)
 
 /**
  * GET /api/v1/health

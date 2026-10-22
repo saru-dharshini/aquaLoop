@@ -17,6 +17,7 @@ import rateLimit from 'express-rate-limit'
 import dotenv from 'dotenv'
 import cookieParser from 'cookie-parser'
 import helmet from 'helmet'
+import path from 'node:path'
 
 import { validateEnv } from './config/env.js'
 import { connectDB, isConnected } from './config/db.js'
@@ -25,7 +26,9 @@ import authRoutes from './routes/authRoutes.js'
 import missionRoutes from './routes/missionRoutes.js'
 import actionRoutes from './routes/actionRoutes.js'
 import gameRoutes from './routes/gameRoutes.js'
+import reportRoutes from './routes/reportRoutes.js'
 import { handleGetLeaderboard } from './controllers/gameController.js'
+import { reconcileReports } from './services/reportService.js'
 
 // Load environment variables from .env
 dotenv.config()
@@ -37,7 +40,11 @@ const { isProduction, nodeEnv, port } = envConfig
 const app = express()
 
 // ── Security Headers ──────────────────────────────────────────
-app.use(helmet())
+app.use(
+  helmet({
+    crossOriginResourcePolicy: { policy: 'cross-origin' },
+  }),
+)
 
 // ── Logging ───────────────────────────────────────────────────
 if (nodeEnv !== 'test') {
@@ -89,6 +96,16 @@ app.use('/api/v1/missions', missionRoutes)
 app.use('/api/v1/actions', actionRoutes)
 app.use('/api/v1/game', gameRoutes)
 app.get('/api/v1/leaderboard', handleGetLeaderboard)
+
+// Civic Reporting APIs & Static Uploads — Phase 4
+app.use(
+  '/uploads/reports',
+  express.static(path.resolve(process.cwd(), 'uploads', 'reports'), {
+    maxAge: '1d',
+    etag: true,
+  }),
+)
+app.use('/api/v1/reports', reportRoutes)
 
 /**
  * GET /api/v1/health
@@ -160,11 +177,37 @@ app.use((err, req, res, _next) => {
   res.status(status).json({ error: message })
 })
 
+// ── Background Reconciliation Sweeper ─────────────────────────
+const RECONCILIATION_INTERVAL_MS = 30000 // Run every 30 seconds
+let reconciliationTimer = null
+
+export function startReconciliation() {
+  if (!reconciliationTimer && nodeEnv !== 'test') {
+    reconciliationTimer = setInterval(async () => {
+      try {
+        await reconcileReports()
+      } catch (err) {
+        console.error('[Reconciler] Background sweep failed:', err.message)
+      }
+    }, RECONCILIATION_INTERVAL_MS)
+  }
+}
+
+export function stopReconciliation() {
+  if (reconciliationTimer) {
+    clearInterval(reconciliationTimer)
+    reconciliationTimer = null
+  }
+}
+
 // ── Start ─────────────────────────────────────────────────────
 // Only start listening if not running in a test environment
+let serverInstance = null
+
 if (nodeEnv !== 'test') {
   connectDB()
-  app.listen(port, () => {
+  startReconciliation()
+  serverInstance = app.listen(port, () => {
     console.log(`
   ╭─────────────────────────────────────╮
   │  AquaLoop API — ${nodeEnv.padEnd(12)}       │
@@ -173,6 +216,18 @@ if (nodeEnv !== 'test') {
   ╰─────────────────────────────────────╯
   `)
   })
+
+  // Graceful shutdown handling
+  const shutdown = () => {
+    stopReconciliation()
+    if (serverInstance) {
+      serverInstance.close(() => {
+        process.exit(0)
+      })
+    }
+  }
+  process.on('SIGTERM', shutdown)
+  process.on('SIGINT', shutdown)
 }
 
 export default app

@@ -13,6 +13,7 @@ import Mission from '../models/Mission.js'
 import UserMission from '../models/UserMission.js'
 import { DEFAULT_MISSIONS } from '../data/defaultMissions.js'
 import { awardXP } from './xpLedgerService.js'
+import { checkAndAwardBadges } from './badgeService.js'
 
 const PASSING_PERCENTAGE = 80
 const RETRY_COOLDOWN_MS = 60 * 60 * 1000 // 1 hour
@@ -232,6 +233,9 @@ export async function submitQuiz({ userId, slug, answers = [] }) {
     { upsert: true, returnDocument: 'after' },
   )
 
+  // Evaluate badge eligibility after quiz completion
+  const newBadges = await checkAndAwardBadges(userId)
+
   return {
     passed: true,
     scorePercent,
@@ -240,5 +244,6 @@ export async function submitQuiz({ userId, slug, answers = [] }) {
     awardedXP: awardResult.awardedXP,
     dailyCapped: awardResult.dailyCapped,
     balanceAfter: awardResult.balanceAfter,
+    newBadges,
   }
 }

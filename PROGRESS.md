@@ -1,10 +1,10 @@
 # AquaLoop — Progress Tracker
 
-> **Last Updated:** 2026-10-18
+> **Last Updated:** 2026-10-22
 > **Canonical Root:** `C:\Users\HP\OneDrive\Desktop\aquaLoop`
-> **Current Phase:** Phase 3B — Core Gamification Implementation (COMPLETED & VERIFIED)
-> **Next Phase Gate:** Phase 4 — Civic Water Issue Reporting & Interactive Map (requires user review and approval)
-> **Latest Git Commit:** `6357da6` (`feat: secure authentication and database foundation`)
+> **Current Phase:** Phase 4 — Civic Water Issue Reporting & Interactive Map (Step 1 & Step 2 Fully Implemented and Verified)
+> **Next Phase Gate:** Phase 5 Implementation Approval (Real-time WebSockets, Advanced Aggregations, Service Integration)
+> **Latest Git Commit:** `76041ff` (`feat: implement gamification and XP ledger`)
 
 ---
 
@@ -107,6 +107,77 @@ Key Highlights:
 - [x] **`Leaderboard.jsx`**: Live `/api/v1/leaderboard` connection with city dropdown, podium cards, pagination, and `[Sample Data]` badges.
 - [x] **`StatCard.jsx`**: Added support for `honesty="verified"` badge.
 
+### Phase 4 — Civic Water Issue Reporting & Interactive Map (In Progress)
+
+#### Phase 4 Step 1 — Models, Spatial Settlement & Image Sanitisation ✅
+- [x] **Pure-JS Buffer Inspection & Sanitizer (`server/src/utils/imageSanitizer.js`)**:
+  - Validates magic bytes for JPEG (`FF D8 FF`) and PNG (`89 50 4E 47 0D 0A 1A 0A`).
+  - Strips EXIF/GPS/APP1..15 and COM segments from JPEG buffers.
+  - Strips ancillary metadata chunks (`eXIf`, `tEXt`, `zTXt`, `iTXt`, `tIME`, `pHYs`) from PNG buffers.
+  - Strictly rejects unsupported/unsafe formats (WebP, SVG, GIF, BMP, plain text) and malformed/oversized buffers (>5MB) with 400/413 status codes.
+  - Zero paid external dependencies or platform-specific binaries.
+- [x] **Civic Report Model (`server/src/models/Report.js`)**:
+  - Approved categories: `public_leak`, `water_contamination`, `community_wastage`, `dry_public_tap`.
+  - Lifecycle statuses: `open`, `in_review`, `resolved`, `closed`.
+  - Settlement state machine: `unsettled`, `final_primary`, `final_corroboration`.
+  - GeoJSON Point coordinates with `2dsphere` index and compound query indexes.
+  - Environmental impact estimation fields with strict honesty labels (`estimatedLitresPerHour`, `measuredLitresSaved`, `impactHonestyLabel`).
+- [x] **Spatial Lease Model (`server/src/models/SpatialLease.js`)**:
+  - Deterministic 0.0005° grid coordinate hashing (`cell_gx_gy`).
+  - Lexicographically sorted 9-neighbourhood multi-cell lease acquisition.
+  - Lease token UUIDs, fencing version incrementation on takeover, and automatic TTL expiration.
+  - Safe release filtering by both `reportId` and `leaseToken` preventing stale workers from releasing newer leases.
+- [x] **Atomic Spatial Settlement Engine (`server/src/services/reportService.js`)**:
+  - Ingestion gate: reports created with `settlementStatus: 'unsettled'`, `baseXPAwarded: false`, base XP withheld.
+  - 50-metre proximity deduplication via `$nearSphere`.
+  - Atomic settlement to `final_primary` (30 XP awarded via existing `XPTransaction` ledger, daily capped) or `final_corroboration` (0 XP, links to primary, increments corroboration counter).
+  - Background crash recovery sweeper (`reconcileReports`) for stalled unsettled reports and expired leases.
+- [x] **Comprehensive Step 1 Test Suite (`server/tests/reportSettlement.test.js`)**:
+  - 18 tests covering schema validation, GeoJSON index queries, image sanitisation, polyglot stripping, multi-cell contention/fencing, concurrent adjacent settlements, withheld XP, post-write fencing confirmation, and idempotent reconciler recovery.
+
+#### Phase 4 Step 2 — Report APIs, Secure Uploads, Recovery Sweeper & Map UI ✅
+- [x] **Hardened Image Sanitisation Utility (`server/src/utils/imageSanitizer.js`)**:
+  - Validates magic bytes for JPEG and PNG.
+  - Enforces valid `SOF` frame headers in JPEG and slices cleanly at the real `EOI` marker (`FF D9`), strictly dropping trailing polyglot payloads.
+  - Rejects truncated markers, out-of-bounds segments, and malformed structures with clear 400 errors.
+  - Enforces `IHDR` first chunk, `IDAT` presence, and `IEND` termination in PNG streams.
+- [x] **Multer Local Upload Middleware (`server/src/middleware/uploadMiddleware.js`)**:
+  - In-memory upload buffer handling (prevents unvalidated files from touching disk).
+  - Enforces 5MB limit with clean 413 error.
+  - Generates cryptographically random UUID filenames under `server/uploads/reports/` (immune to path traversal).
+  - ₹0 operating cost: no external paid APIs, cloud buckets, or third-party storage.
+- [x] **Civic Report API Endpoints (`server/src/controllers/reportController.js`, `server/src/routes/reportRoutes.js`)**:
+  - `POST /api/v1/reports`: Authenticated report submission with withheld XP until spatial settlement settles as `final_primary` (30 base XP) or `final_corroboration` (0 XP).
+  - `GET /api/v1/reports`: Public-safe querying with category, status, bounding box, radius filters, pagination, and strict sample data exclusion from community metrics.
+  - `GET /api/v1/reports/:id`: Single report public safe projection.
+  - `PATCH /api/v1/reports/:id/status`: Admin-only status review (`requireRole('admin')`), awarding 50 cap-exempt bonus XP upon `resolved` status with idempotent key `report_resolve_${reportId}`. Updates honesty labels on measured litres.
+- [x] **In-Process Reconciliation Sweeper Lifecycle (`server/src/index.js`, `server/src/services/reportService.js`)**:
+  - `reconcileReports()` guarded with an in-process re-entrancy lock to prevent overlapping runs.
+  - Recurring interval (30s) registered in `index.js`, safe against crashes and retries.
+  - Graceful shutdown handles `SIGTERM`/`SIGINT`, stopping new reconciliation work and closing server cleanly.
+- [x] **Frontend Leaflet Interactive Map & Report Submission (`client/src/pages/`)**:
+  - `ReportIssue.jsx`: Category selection, interactive Leaflet location picker centered on India (`[20.5937, 78.9629]`, zoom 5), manual coordinate inputs, browser geolocation button, optional sanitized image upload, and honest settlement status feedback.
+  - `ImpactMap.jsx`: Leaflet OpenStreetMap view with custom offline SVG pins, popups showing resolution status & honesty labels, real community metric counters (sample data strictly excluded), and an accessible table list fallback view with keyboard navigation.
+  - `MapMarkerIcons.js`: Zero external network dependencies for map pins; matches Living Water design tokens.
+- [x] **Full Automated Test Coverage (`server/tests/reportApi.test.js`)**:
+  - 11 comprehensive tests covering submission, uploads, polyglot stripping, public browsing, sample data exclusion, admin RBAC, 50 cap-exempt resolution XP idempotency, and reconciliation lifecycle safety.
+
+#### Phase 4 Targeted Hardening & Quality Audit Fixes ✅
+- [x] **MongoDB Spatial Query Compatibility (`reportService.js`)**:
+  - Removed database-level `.sort({ createdAt: 1, _id: 1 })` chained to `$nearSphere` on candidate query line 355 to prevent potential `BadValue: cannot use sort with $nearSphere` on real MongoDB instances.
+  - Preserved deterministic in-memory total ordering (`candidateReports.sort(...)`) and spatial settlement logic.
+- [x] **Badge Evaluation on Report Resolution (`reportService.js` & `reportController.js`)**:
+  - Connected `checkAndAwardBadges(report.reporterId)` in `updateReportStatus` when a report genuinely transitions to `'resolved'`.
+  - Guarded against duplicate resolution calls so badges are not repeatedly evaluated or awarded.
+  - Returned `newBadges` in controller response.
+- [x] **Protected `isSample` Flag on Report Submission (`reportController.js`)**:
+  - Restricted `isSample: true` in `handleCreateReport` to authorized admins or explicit demo accounts (`req.user.isSample === true`).
+  - Added 403 Forbidden rejection when ordinary citizens attempt to pass `isSample: true`.
+- [x] **Automated Regression Test Suite (`reportApi.test.js`)**:
+  - Added test confirming citizen attempt to pass `isSample: true` is rejected with 403.
+  - Added test confirming admin can create sample report with `isSample: true`.
+  - Added test confirming reporter earns Level 2 badge (`stream-scout`) upon report resolution (crossing 500 XP), and duplicate resolution requests return `newBadges: []`.
+
 ---
 
 ## Verification and Test Results
@@ -114,83 +185,44 @@ Key Highlights:
 ### 1. Backend Integration Test Suite (Vitest + MongoMemoryServer)
 Command: `npm test` inside `server/`
 ```
- ✓ tests/xpLedger.test.js (12 tests)
-   ✓ Daily Cap & Idempotency Enforcement (3)
-     ✓ enforces exact partial award down to cap ceiling and flags dailyCapped
-     ✓ allows cap-exempt admin verification bonuses to exceed daily cap
-     ✓ rejects duplicate requests and returns idempotent cached results
-   ✓ High-Concurrency Stress Tests (2)
-     ✓ prevents daily cap overflow when 10 requests compete for 20 XP headroom in parallel
-     ✓ safely handles concurrent identical duplicate submissions without race conditions
-   ✓ Crash Recovery & Projection Rebuild (7)
-     ✓ safely recovers a crash occurring after ledger creation (Step 1 crash)
-     ✓ safely recovers orphaned reservation when crash occurs between reservation and state write (Step 1.5 crash) and restores capacity
-     ✓ concurrent recovery workers acquire distributed lease and never double-apply
-     ✓ safely recovers a crash occurring after reservation placed (Step 2 crash)
-     ✓ guarantees balance is never incremented twice if crash occurred after user update (Step 3 crash)
-     ✓ runs repeatedly with complete idempotency
-     ✓ deterministically rebuilds user projection from immutable ledger in disaster recovery
- ✓ tests/gamification.test.js (11 tests)
-   ✓ Missions & Quizzes API (3)
-     ✓ handles failing quiz: awards 0 XP, hides answers, and enforces 1-hour retry cooldown
-     ✓ handles passing quiz: awards base XP, marks completed, and blocks retrying completed quiz
-   ✓ Actions & Admin Verification API (3)
-     ✓ logs a daily habit action and prevents duplicate logging on same day
-     ✓ rejects quiz submission when answers is not an array (schema enforcement)
-     ✓ marks actions with photo proof as pending_verification and enforces admin verification with explicit verifiedLitres
-   ✓ Daily Bonus, Badges, and Leaderboard API (3)
-     ✓ awards daily bonus (10–25 XP) and rejects multiple claims on the same day
-     ✓ automatically awards first-drop badge on first action logged without duplicates
-     ✓ returns leaderboard with correct ranking, tie-breaking, and sample data exclusion
-   ✓ Streaks & Timezone / Milestone Edge Cases (2)
-     ✓ correctly increments streak across IST midnight boundary (23:59:58 to 00:00:02)
-     ✓ prevents re-claiming streak milestone rewards and freezes after deliberate streak reset
+ ✓ tests/reportSettlement.test.js (18 tests)
  ✓ tests/auth.test.js (23 tests)
-   ✓ POST /api/v1/auth/register (4)
-   ✓ POST /api/v1/auth/login (3)
-   ✓ POST /api/v1/auth/logout (1)
-   ✓ GET /api/v1/auth/me (Protected Route) (3)
-   ✓ Role-based Access Control (requireRole) (2)
-   ✓ Security Edge Cases: Token Expiry & Tampering (2)
-   ✓ Security Edge Cases: Content-Type & Payload Limits (2)
-   ✓ Security Edge Cases: Production Environment Validation (6)
+ ✓ tests/reportApi.test.js (14 tests)
+ ✓ tests/xpLedger.test.js (14 tests)
+ ✓ tests/gamification.test.js (12 tests)
 
- Test Files  3 passed (3)
-      Tests  48 passed (48)
-   Duration  10.28s
+ Test Files  5 passed (5)
+      Tests  81 passed (81)
+   Duration  18.98s
 ```
 
 ### 2. Frontend Production Build (Vite)
 Command: `npm run build` inside `client/`
 ```
-✓ 2039 modules transformed.
+✓ 2082 modules transformed.
 dist/index.html                   1.24 kB │ gzip:   0.65 kB
-dist/assets/index-Qd3aQSeD.css   14.50 kB │ gzip:   3.51 kB
-dist/assets/index-CI9mtXVP.js   437.21 kB │ gzip: 131.85 kB
-✓ built in 1.02s — 0 errors
+dist/assets/index-2L0V0k7Y.css   29.59 kB │ gzip:   9.74 kB
+dist/assets/index-bUwCifIl.js   609.64 kB │ gzip: 182.10 kB
+✓ built in 1.43s — 0 errors
 ```
 
 ### 3. Frontend Lint (Oxlint)
 Command: `npm run lint` inside `client/`
 ```
-Found 0 errors. Finished in 55ms on 26 files.
+Found 0 errors (5 compiler purity/fast-refresh warnings). Finished in 164ms on 27 files.
 ```
-
-### 4. Phase 3B Targeted Fixes Applied
-- **Fix 1 (Frontend Quiz Payload):** `Dashboard.jsx` maps `quizAnswers` object to the required array schema `[{ questionId, selectedIndex }]` before posting. Validated via automated test in `gamification.test.js`.
-- **Fix 2 (Orphaned Daily XP Reservation):** `reconcileUserXP` detects orphaned reservations in `UserDailyXP` for transactions remaining in `PENDING_RESERVATION`, decrements `reservedXP` atomically, pulls only its own reservation, and safely restores daily cap headroom without leaking or double-applying. Validated with Step 1.5 crash and concurrent recovery worker tests in `xpLedger.test.js`.
-- **Fix 3 (Environmental Impact Verification):** Removed implicit fallback to citizen's claimed litres in `actionService.js`. Approving an action as verified now strictly requires an explicit, validated non-negative number for `verifiedLitres`, returning `400 Bad Request` if missing or invalid. Validated in `gamification.test.js`.
 
 ---
 
 ## Known Limitations
 
-1. **Local MongoDB standalone replica set requirement**: Standalone local MongoDB Community Server instances do not support multi-document transactions. Concurrency safety is achieved via single-document atomic aggregation update pipelines on `UserDailyXP` and immutable ledger documents.
+1. **Local MongoDB standalone replica set requirement**: Standalone local MongoDB Community Server instances do not support multi-document transactions. Concurrency safety is achieved via single-document atomic aggregation update pipelines on `UserDailyXP`, distributed leases on `SpatialLease`, optimistic post-write fencing confirmation, and immutable ledger documents.
 2. **In-memory test database vs. persistent database**: All automated tests run against an isolated in-memory MongoDB instance via `mongodb-memory-server`. In local development, the server connects to `mongodb://localhost:27017/aqualoop` or falls back gracefully with setup instructions.
-3. **Geo-tagging and map picker**: Phase 4 will introduce Leaflet geo-pickers and Cloudinary uploads for civic reporting.
+3. **Pure-JS Image Sanitisation Scope**: Format validation and metadata stripping operate on marker/chunk structure without full pixel-level decompression or re-encoding. It strictly strips EXIF/GPS/comments and polyglot trailing data, but does not re-render pixels.
+4. **Tile Provider Limits**: The map relies on standard OpenStreetMap public tile servers (`tile.openstreetmap.org`) under their standard usage policy (requires proper user-agent attribution and prohibits bulk pre-fetching).
 
 ---
 
 ## Next Approved Action
 
-**Awaiting user review and acceptance of Phase 3B before proceeding to Phase 4 (Civic Water Issue Reporting & Interactive Map).**
+**Awaiting user review and acceptance of Phase 4 Step 2 results before proceeding to Phase 5 (Real-time Updates, Public Engagement & Advanced Aggregations).**

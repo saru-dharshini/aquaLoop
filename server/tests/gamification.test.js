@@ -183,6 +183,111 @@ describe('Missions & Quizzes API', () => {
     expect(resRetake.status).toBe(409)
     expect(resRetake.body.error).toContain('already been completed')
   })
+
+  it('automatically unlocks Curious Stream badge upon completing 3 beginner quizzes without logging any action', async () => {
+    const user = await createCitizen('quiz_learner', 'learner@aqualoop.local')
+    const token = generateToken(user)
+
+    // Complete Quiz 1: learn-water-footprint-101
+    const res1 = await request(app)
+      .post('/api/v1/missions/learn-water-footprint-101/quiz')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        answers: [
+          { questionId: 'q1', selectedIndex: 1 },
+          { questionId: 'q2', selectedIndex: 2 },
+          { questionId: 'q3', selectedIndex: 0 },
+          { questionId: 'q4', selectedIndex: 1 },
+          { questionId: 'q5', selectedIndex: 1 },
+        ],
+      })
+    expect(res1.status).toBe(200)
+    expect(res1.body.passed).toBe(true)
+    expect(res1.body.newBadges).toEqual([])
+
+    // Complete Quiz 2: learn-groundwater-crisis
+    const res2 = await request(app)
+      .post('/api/v1/missions/learn-groundwater-crisis/quiz')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        answers: [
+          { questionId: 'q1', selectedIndex: 1 },
+          { questionId: 'q2', selectedIndex: 1 },
+          { questionId: 'q3', selectedIndex: 0 },
+          { questionId: 'q4', selectedIndex: 1 },
+          { questionId: 'q5', selectedIndex: 0 },
+        ],
+      })
+    expect(res2.status).toBe(200)
+    expect(res2.body.passed).toBe(true)
+    expect(res2.body.newBadges).toEqual([])
+
+    // Attempt Quiz 3 with failing answers first: should NOT award badge
+    const resFail3 = await request(app)
+      .post('/api/v1/missions/learn-urban-water-cycle/quiz')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        answers: [
+          { questionId: 'q1', selectedIndex: 3 },
+          { questionId: 'q2', selectedIndex: 3 },
+          { questionId: 'q3', selectedIndex: 3 },
+          { questionId: 'q4', selectedIndex: 3 },
+          { questionId: 'q5', selectedIndex: 3 },
+        ],
+      })
+    expect(resFail3.status).toBe(200)
+    expect(resFail3.body.passed).toBe(false)
+    expect(resFail3.body.newBadges).toBeUndefined()
+
+    // Confirm curious-stream is still locked
+    const resBadgesMid = await request(app)
+      .get('/api/v1/game/badges/my')
+      .set('Authorization', `Bearer ${token}`)
+    expect(resBadgesMid.status).toBe(200)
+    expect(resBadgesMid.body.badges.some((b) => b.slug === 'curious-stream')).toBe(false)
+
+    // Clear cooldown on failed quiz attempt so user can pass
+    await UserMission.updateOne(
+      { userId: user._id, missionSlug: 'learn-urban-water-cycle' },
+      { $set: { retryAvailableAt: null } },
+    )
+
+    // Complete Quiz 3 with passing answers: learn-urban-water-cycle
+    const res3 = await request(app)
+      .post('/api/v1/missions/learn-urban-water-cycle/quiz')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        answers: [
+          { questionId: 'q1', selectedIndex: 1 },
+          { questionId: 'q2', selectedIndex: 1 },
+          { questionId: 'q3', selectedIndex: 1 },
+          { questionId: 'q4', selectedIndex: 0 },
+          { questionId: 'q5', selectedIndex: 1 },
+        ],
+      })
+    expect(res3.status).toBe(200)
+    expect(res3.body.passed).toBe(true)
+    expect(res3.body.newBadges).toBeDefined()
+    expect(res3.body.newBadges.some((b) => b.slug === 'curious-stream')).toBe(true)
+
+    // Verify GET /api/v1/game/badges/my includes curious-stream
+    const resBadgesFinal = await request(app)
+      .get('/api/v1/game/badges/my')
+      .set('Authorization', `Bearer ${token}`)
+    expect(resBadgesFinal.status).toBe(200)
+    expect(resBadgesFinal.body.badges.some((b) => b.slug === 'curious-stream')).toBe(true)
+
+    // Verify strictly zero actions logged or created in database
+    const dbUser = await User.findById(user._id)
+    expect(dbUser.actionsLogged).toBe(0)
+    const actionCount = await Action.countDocuments({ userId: user._id })
+    expect(actionCount).toBe(0)
+
+    // Verify single UserBadge document exists
+    const userBadgesInDB = await UserBadge.find({ userId: user._id })
+    expect(userBadgesInDB.length).toBe(1)
+    expect(userBadgesInDB[0].badgeSlug).toBe('curious-stream')
+  })
 })
 
 describe('Actions & Admin Verification API', () => {

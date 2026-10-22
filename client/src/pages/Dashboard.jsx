@@ -124,7 +124,7 @@ export default function Dashboard() {
         user ? api.get('/game/badges/my') : Promise.resolve({ data: { badges: [] } }),
       ])
       setBadges(allRes.data.badges || [])
-      const earnedSlugs = new Set((myRes.data.badges || []).map((b) => b.badgeSlug))
+      const earnedSlugs = new Set((myRes.data.badges || []).map((b) => b.slug || b.badgeSlug))
       setUserBadgeIds(earnedSlugs)
     } catch {
       // Gracefully fall back

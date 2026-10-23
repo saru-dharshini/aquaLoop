@@ -10,7 +10,7 @@
  */
 import { useState, useEffect, useMemo } from 'react'
 import { Link } from 'react-router-dom'
-import { MapContainer, TileLayer, Marker, Popup } from 'react-leaflet'
+import { MapContainer, TileLayer, Marker, Popup, useMap } from 'react-leaflet'
 import {
   MapPin,
   List,
@@ -27,6 +27,20 @@ import { createCategoryIcon, getCategoryMetadata } from '../components/ui/MapMar
 
 const INDIA_CENTER = [20.5937, 78.9629]
 const DEFAULT_ZOOM = 5
+
+function MapController() {
+  const map = useMap()
+
+  useEffect(() => {
+    map.invalidateSize()
+    const timer = setTimeout(() => {
+      map.invalidateSize()
+    }, 250)
+    return () => clearTimeout(timer)
+  }, [map])
+
+  return null
+}
 
 export default function ImpactMap() {
   const [reports, setReports] = useState([])
@@ -241,9 +255,11 @@ export default function ImpactMap() {
               zoom={DEFAULT_ZOOM}
               style={{ height: '100%', width: '100%' }}
             >
+              <MapController />
               <TileLayer
-                url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+                url="https://tile.openstreetmap.org/{z}/{x}/{y}.png"
                 attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+                maxZoom={19}
               />
               {filteredReports.map((report) => {
                 if (

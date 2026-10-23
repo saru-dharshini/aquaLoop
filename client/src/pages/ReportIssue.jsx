@@ -7,7 +7,7 @@
  */
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { MapContainer, TileLayer, Marker, useMapEvents } from 'react-leaflet'
+import { MapContainer, TileLayer, Marker, useMap, useMapEvents } from 'react-leaflet'
 import {
   AlertTriangle,
   Camera,
@@ -62,6 +62,33 @@ function LocationMarker({ position, setPosition }) {
   return position ? (
     <Marker position={position} icon={createPickerIcon()} />
   ) : null
+}
+
+// Child component to force size invalidation and center animation
+function MapController({ markerPos }) {
+  const map = useMap()
+
+  useEffect(() => {
+    map.invalidateSize()
+    const timer = setTimeout(() => {
+      map.invalidateSize()
+    }, 250)
+    return () => clearTimeout(timer)
+  }, [map])
+
+  useEffect(() => {
+    if (
+      markerPos &&
+      Array.isArray(markerPos) &&
+      markerPos.length === 2 &&
+      !isNaN(markerPos[0]) &&
+      !isNaN(markerPos[1])
+    ) {
+      map.flyTo(markerPos, Math.max(map.getZoom(), 15), { animate: true, duration: 0.8 })
+    }
+  }, [markerPos, map])
+
+  return null
 }
 
 export default function ReportIssue() {
@@ -464,7 +491,8 @@ export default function ReportIssue() {
                   borderRadius: 'var(--radius-md)',
                   overflow: 'hidden',
                   border: '1px solid var(--surface-border-strong)',
-                  marginBottom: 'var(--space-3)',
+                  marginBottom: 'var(--space-4)',
+                  position: 'relative',
                 }}
               >
                 <MapContainer
@@ -472,18 +500,20 @@ export default function ReportIssue() {
                   zoom={markerPos ? 14 : DEFAULT_ZOOM}
                   style={{ height: '100%', width: '100%' }}
                 >
+                  <MapController markerPos={markerPos} />
                   <TileLayer
-                    url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+                    url="https://tile.openstreetmap.org/{z}/{x}/{y}.png"
                     attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+                    maxZoom={19}
                   />
                   <LocationMarker position={markerPos} setPosition={handleMapPick} />
                 </MapContainer>
               </div>
 
               {/* Accessible Manual Coordinates & Address Inputs */}
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-3)' }}>
-                <div>
-                  <label className="form-label" htmlFor="latitude" style={{ fontSize: 'var(--text-xs)' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-4)', marginBottom: 'var(--space-4)' }}>
+                <div className="form-group">
+                  <label className="form-label" htmlFor="latitude">
                     Latitude
                   </label>
                   <input
@@ -497,8 +527,8 @@ export default function ReportIssue() {
                     onChange={handleCoordChange}
                   />
                 </div>
-                <div>
-                  <label className="form-label" htmlFor="longitude" style={{ fontSize: 'var(--text-xs)' }}>
+                <div className="form-group">
+                  <label className="form-label" htmlFor="longitude">
                     Longitude
                   </label>
                   <input
@@ -514,8 +544,8 @@ export default function ReportIssue() {
                 </div>
               </div>
 
-              <div style={{ marginTop: 'var(--space-3)' }}>
-                <label className="form-label" htmlFor="address" style={{ fontSize: 'var(--text-xs)' }}>
+              <div className="form-group">
+                <label className="form-label" htmlFor="address">
                   Street / Landmark (Optional)
                 </label>
                 <input

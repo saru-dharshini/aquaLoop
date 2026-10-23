@@ -140,11 +140,16 @@ const clientDistPath = clientDistCandidates.find((p) => {
 
 if (isProduction && clientDistPath) {
   app.use(express.static(clientDistPath))
-  app.get('*', (req, res, next) => {
-    if (req.path.startsWith('/api') || req.path.startsWith('/uploads')) {
-      return next()
+  // Fallback to React index.html for SPA client-side routes (Express 5 safe)
+  app.use((req, res, next) => {
+    if (
+      req.method === 'GET' &&
+      !req.path.startsWith('/api') &&
+      !req.path.startsWith('/uploads')
+    ) {
+      return res.sendFile(path.join(clientDistPath, 'index.html'))
     }
-    res.sendFile(path.join(clientDistPath, 'index.html'))
+    next()
   })
 } else {
   // Root path — brief API description

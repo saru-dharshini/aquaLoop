@@ -60,8 +60,25 @@ const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || 'http://localhost:5173')
 app.use(
   cors({
     origin: (origin, callback) => {
-      // Allow requests with no origin (e.g. curl, test runners, mobile)
-      if (!origin || ALLOWED_ORIGINS.includes(origin)) {
+      // Allow requests with no origin (e.g. curl, test runners, mobile, same-origin)
+      if (!origin) return callback(null, true)
+
+      let hostname = ''
+      try {
+        hostname = new URL(origin).hostname
+      } catch {
+        hostname = ''
+      }
+
+      const isAllowed =
+        ALLOWED_ORIGINS.includes(origin) ||
+        ALLOWED_ORIGINS.includes('*') ||
+        hostname.endsWith('.onrender.com') ||
+        hostname.endsWith('.vercel.app') ||
+        hostname === 'localhost' ||
+        hostname === '127.0.0.1'
+
+      if (isAllowed) {
         callback(null, true)
       } else {
         callback(new Error(`CORS: origin ${origin} not allowed`))

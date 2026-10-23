@@ -1,0 +1,24 @@
+# AquaLoop — Render Blueprint for 100% Free Tier Deployment
+# Docs: https://render.com/docs/blueprint-spec
+
+services:
+  - type: web
+    name: aqualoop
+    runtime: node
+    plan: free
+    region: singapore # or oregon, frankfurt, ohio
+    buildCommand: npm run build
+    startCommand: npm start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 10000
+      - key: MONGODB_URI
+        sync: false # Set this in Render dashboard from MongoDB Atlas
+      - key: JWT_SECRET
+        generateValue: true # Render generates a secure random 32+ char secret
+      - key: COOKIE_SECRET
+        generateValue: true # Render generates a secure random 32+ char secret
+      - key: ALLOWED_ORIGINS
+        value: https://aqualoop.onrender.com

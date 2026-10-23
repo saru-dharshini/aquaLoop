@@ -43,11 +43,12 @@ export function verifyToken(token) {
 export function getCookieOptions() {
   const isProduction = process.env.NODE_ENV === 'production'
   const maxAgeMs = 7 * 24 * 60 * 60 * 1000 // 7 days
+  const sameSite = process.env.COOKIE_SAMESITE || (isProduction ? 'strict' : 'lax')
 
   return {
     httpOnly: true,
     secure: isProduction,
-    sameSite: isProduction ? 'strict' : 'lax',
+    sameSite,
     maxAge: maxAgeMs,
     path: '/',
   }

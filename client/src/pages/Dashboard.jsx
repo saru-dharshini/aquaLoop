@@ -9,7 +9,7 @@
  * - Verified vs self-reported water savings metrics
  * - Badge achievements showcase (GET /api/v1/game/badges)
  */
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { Link } from 'react-router-dom'
 import {
   LayoutDashboard,
@@ -23,16 +23,21 @@ import {
   Sparkles,
   CheckCircle2,
   XCircle,
-  Clock,
-  Award,
 } from 'lucide-react'
 import Sidebar from '../components/layout/Sidebar.jsx'
 import StatCard from '../components/ui/StatCard.jsx'
 import XPBar from '../components/ui/XPBar.jsx'
+import StreakCalendar from '../components/ui/StreakCalendar.jsx'
 import Avatar from '../components/ui/Avatar.jsx'
 import Badge from '../components/ui/Badge.jsx'
 import Button from '../components/ui/Button.jsx'
 import Modal from '../components/ui/Modal.jsx'
+import LevelUpModal from '../components/ui/LevelUpModal.jsx'
+import AchievementUnlockModal from '../components/ui/AchievementUnlockModal.jsx'
+import MissionCard from '../components/ui/MissionCard.jsx'
+import QuestRoadmap from '../components/ui/QuestRoadmap.jsx'
+import AchievementWall from '../components/ui/AchievementWall.jsx'
+import CommunityGoalCard from '../components/ui/CommunityGoalCard.jsx'
 import { useAuth } from '../context/AuthContext.jsx'
 import { useToast } from '../components/ui/Toast.jsx'
 import api from '../services/api.js'
@@ -93,6 +98,25 @@ export default function Dashboard() {
   const [quizSubmitting, setQuizSubmitting] = useState(false)
   const [quizResult, setQuizResult] = useState(null)
 
+  // Celebration modals state
+  const [levelUpData, setLevelUpData] = useState(null)
+  const [newBadgesToCelebrate, setNewBadgesToCelebrate] = useState([])
+  const [achievementModalOpen, setAchievementModalOpen] = useState(false)
+  const celebratedBadgeSlugsRef = useRef(new Set())
+  const isBadgesInitializedRef = useRef(false)
+
+  const queueNewBadges = useCallback((newBadges) => {
+    if (!Array.isArray(newBadges) || newBadges.length === 0) return
+    const uncelebrated = newBadges.filter(
+      (b) => b && (b.slug || b.badgeSlug) && !celebratedBadgeSlugsRef.current.has(b.slug || b.badgeSlug)
+    )
+    if (uncelebrated.length > 0) {
+      uncelebrated.forEach((b) => celebratedBadgeSlugsRef.current.add(b.slug || b.badgeSlug))
+      setNewBadgesToCelebrate(uncelebrated)
+      setAchievementModalOpen(true)
+    }
+  }, [])
+
   const currentUser = user || SAMPLE_USER
 
   // Fetch actions
@@ -126,6 +150,12 @@ export default function Dashboard() {
       setBadges(allRes.data.badges || [])
       const earnedSlugs = new Set((myRes.data.badges || []).map((b) => b.slug || b.badgeSlug))
       setUserBadgeIds(earnedSlugs)
+
+      // On initial load, record all currently owned badges to prevent duplicate celebrations
+      if (!isBadgesInitializedRef.current) {
+        earnedSlugs.forEach((s) => celebratedBadgeSlugsRef.current.add(s))
+        isBadgesInitializedRef.current = true
+      }
     } catch {
       // Gracefully fall back
     }
@@ -147,6 +177,7 @@ export default function Dashboard() {
     }
 
     setLoadingBonus(true)
+    const prevLevel = user.level || 1
     try {
       const res = await api.post('/game/daily-bonus')
       addToast({
@@ -154,6 +185,17 @@ export default function Dashboard() {
         type: 'success',
       })
       await refreshUser()
+
+      // Detect genuine level promotion
+      try {
+        const meRes = await api.get('/auth/me')
+        const refreshedUser = meRes.data?.user
+        if (refreshedUser && refreshedUser.level > prevLevel) {
+          setLevelUpData({ level: refreshedUser.level, xp: refreshedUser.xp })
+        }
+      } catch {
+        // Gracefully ignore promotion check error
+      }
     } catch (err) {
       addToast({
         message: err.userMessage || 'Daily bonus already claimed today or daily cap reached.',
@@ -173,6 +215,7 @@ export default function Dashboard() {
     }
 
     setActionSubmitting(true)
+    const prevLevel = user.level || 1
     try {
       const res = await api.post('/actions', {
         missionSlug: actionForm.missionSlug,
@@ -186,11 +229,9 @@ export default function Dashboard() {
         type: 'success',
       })
 
+      // Celebrate any newly awarded badges
       if (res.data.newBadges?.length > 0) {
-        addToast({
-          message: `Achievement Unlocked: ${res.data.newBadges.map((b) => b.name).join(', ')}!`,
-          type: 'success',
-        })
+        queueNewBadges(res.data.newBadges)
       }
 
       setActionModalOpen(false)
@@ -201,6 +242,17 @@ export default function Dashboard() {
         proofImageUrl: '',
       })
       await Promise.all([refreshUser(), fetchActions(), fetchBadges(), fetchMissions()])
+
+      // Detect genuine level promotion
+      try {
+        const meRes = await api.get('/auth/me')
+        const refreshedUser = meRes.data?.user
+        if (refreshedUser && refreshedUser.level > prevLevel) {
+          setLevelUpData({ level: refreshedUser.level, xp: refreshedUser.xp })
+        }
+      } catch {
+        // Gracefully ignore promotion check error
+      }
     } catch (err) {
       addToast({
         message: err.userMessage || 'Could not log action. Check daily limits.',
@@ -239,6 +291,7 @@ export default function Dashboard() {
     }
 
     setQuizSubmitting(true)
+    const prevLevel = user?.level || 1
     try {
       const payloadAnswers = Object.entries(quizAnswers).map(([questionId, selectedIndex]) => ({
         questionId,
@@ -255,6 +308,9 @@ export default function Dashboard() {
           message: `Quiz Passed! +${res.data.awardedXP} XP awarded.`,
           type: 'success',
         })
+        if (res.data.newBadges?.length > 0) {
+          queueNewBadges(res.data.newBadges)
+        }
       } else {
         addToast({
           message: `Scored ${res.data.scorePercent}%. 80% needed to pass. 1-hour cooldown active.`,
@@ -263,6 +319,19 @@ export default function Dashboard() {
       }
 
       await Promise.all([refreshUser(), fetchMissions(), fetchBadges()])
+
+      // Detect genuine level promotion if quiz passed
+      if (res.data.passed) {
+        try {
+          const meRes = await api.get('/auth/me')
+          const refreshedUser = meRes.data?.user
+          if (refreshedUser && refreshedUser.level > prevLevel) {
+            setLevelUpData({ level: refreshedUser.level, xp: refreshedUser.xp })
+          }
+        } catch {
+          // Gracefully ignore promotion check error
+        }
+      }
     } catch (err) {
       addToast({
         message: err.userMessage || 'Quiz submission failed.',
@@ -399,6 +468,15 @@ export default function Dashboard() {
           </div>
         </div>
 
+        {/* Rolling 7-Day Conservation Streak & Freeze Calendar */}
+        <StreakCalendar
+          user={currentUser}
+          actions={user ? actions : SAMPLE_ACTIONS}
+        />
+
+        {/* Collective Community Civic Impact */}
+        <CommunityGoalCard />
+
         {/* Real Stats Row with Strict Honesty */}
         <div
           style={{
@@ -451,6 +529,9 @@ export default function Dashboard() {
             gap: 'var(--space-2)',
             borderBottom: '2px solid var(--surface-border)',
             paddingBottom: 'var(--space-1)',
+            overflowX: 'auto',
+            WebkitOverflowScrolling: 'touch',
+            scrollbarWidth: 'none',
           }}
         >
           <button
@@ -466,6 +547,7 @@ export default function Dashboard() {
               fontWeight: 600,
               fontSize: 'var(--text-sm)',
               cursor: 'pointer',
+              whiteSpace: 'nowrap',
             }}
           >
             My Actions ({user ? actions.length : SAMPLE_ACTIONS.length})
@@ -484,6 +566,7 @@ export default function Dashboard() {
               fontWeight: 600,
               fontSize: 'var(--text-sm)',
               cursor: 'pointer',
+              whiteSpace: 'nowrap',
             }}
           >
             Missions & Quizzes ({missions.length})
@@ -502,6 +585,7 @@ export default function Dashboard() {
               fontWeight: 600,
               fontSize: 'var(--text-sm)',
               cursor: 'pointer',
+              whiteSpace: 'nowrap',
             }}
           >
             Achievements & Badges ({badges.length})
@@ -644,6 +728,9 @@ export default function Dashboard() {
         {/* TAB 2: MISSIONS & QUIZZES */}
         {activeTab === 'missions' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-8)' }}>
+            {/* Visual Quest Progression Roadmap */}
+            <QuestRoadmap user={currentUser} />
+
             {/* Learning Quizzes */}
             <section>
               <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)', marginBottom: 'var(--space-4)' }}>
@@ -655,51 +742,13 @@ export default function Dashboard() {
               </div>
 
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 'var(--space-4)' }}>
-                {learningMissions.map((m) => {
-                  const isCompleted = m.userStatus?.isCompleted
-                  const isCooldown = m.userStatus?.isCooldownActive
-
-                  return (
-                    <div key={m.slug} className="card" style={{ display: 'flex', flexDirection: 'column', justifyContent: 'space-between', padding: 'var(--space-5)' }}>
-                      <div>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 'var(--space-2)', marginBottom: 'var(--space-2)' }}>
-                          <span style={{ fontWeight: 600, fontSize: 'var(--text-sm)', color: 'var(--text-primary)' }}>
-                            {m.title}
-                          </span>
-                          <Badge variant="gold">+{m.baseXP} XP</Badge>
-                        </div>
-                        <p style={{ fontSize: 'var(--text-xs)', color: 'var(--text-secondary)', lineHeight: 'var(--leading-relaxed)', marginBottom: 'var(--space-4)' }}>
-                          {m.description}
-                        </p>
-                      </div>
-
-                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 'var(--space-2)', borderTop: '1px solid var(--surface-border)', paddingTop: 'var(--space-3)' }}>
-                        <div>
-                          {isCompleted ? (
-                            <Badge variant="success" icon={CheckCircle2}>
-                              Passed ({m.userStatus?.scorePercent}%)
-                            </Badge>
-                          ) : isCooldown ? (
-                            <Badge variant="warning" icon={Clock}>
-                              Cooldown active
-                            </Badge>
-                          ) : (
-                            <Badge variant="neutral">{m.difficulty}</Badge>
-                          )}
-                        </div>
-
-                        <Button
-                          size="sm"
-                          variant={isCompleted ? 'outline' : 'primary'}
-                          disabled={isCooldown}
-                          onClick={() => handleStartQuiz(m)}
-                        >
-                          {isCompleted ? 'Retake Quiz' : 'Start Quiz'}
-                        </Button>
-                      </div>
-                    </div>
-                  )
-                })}
+                {learningMissions.map((m) => (
+                  <MissionCard
+                    key={m.slug}
+                    mission={m}
+                    onStartQuiz={handleStartQuiz}
+                  />
+                ))}
               </div>
             </section>
 
@@ -714,43 +763,19 @@ export default function Dashboard() {
 
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 'var(--space-4)' }}>
                 {actionMissions.map((m) => (
-                  <div key={m.slug} className="card" style={{ display: 'flex', flexDirection: 'column', justifyContent: 'space-between', padding: 'var(--space-5)' }}>
-                    <div>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 'var(--space-2)', marginBottom: 'var(--space-2)' }}>
-                        <span style={{ fontWeight: 600, fontSize: 'var(--text-sm)', color: 'var(--text-primary)' }}>
-                          {m.title}
-                        </span>
-                        <Badge variant="gold">+{m.baseXP} XP</Badge>
-                      </div>
-                      <p style={{ fontSize: 'var(--text-xs)', color: 'var(--text-secondary)', lineHeight: 'var(--leading-relaxed)', marginBottom: 'var(--space-3)' }}>
-                        {m.description}
-                      </p>
-                      <p style={{ fontSize: 'var(--text-xs)', color: 'var(--color-primary-700)', fontWeight: 500, margin: 0 }}>
-                        💧 Est. savings: ~{m.estimatedLitresSavedPerDay} L / day
-                      </p>
-                    </div>
-
-                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 'var(--space-2)', borderTop: '1px solid var(--surface-border)', paddingTop: 'var(--space-3)', marginTop: 'var(--space-4)' }}>
-                      <Badge variant="self-reported">
-                        {m.verificationType === 'photo_proof' ? 'Photo proof eligible' : 'Self-reported'}
-                      </Badge>
-                      <Button
-                        size="sm"
-                        variant="primary"
-                        onClick={() => {
-                          setActionForm({
-                            missionSlug: m.slug,
-                            description: m.title,
-                            claimedLitres: m.estimatedLitresSavedPerDay || 30,
-                            proofImageUrl: '',
-                          })
-                          setActionModalOpen(true)
-                        }}
-                      >
-                        Log Action
-                      </Button>
-                    </div>
-                  </div>
+                  <MissionCard
+                    key={m.slug}
+                    mission={m}
+                    onLogAction={(mission) => {
+                      setActionForm({
+                        missionSlug: mission.slug,
+                        description: mission.title,
+                        claimedLitres: mission.estimatedLitresSavedPerDay || 30,
+                        proofImageUrl: '',
+                      })
+                      setActionModalOpen(true)
+                    }}
+                  />
                 ))}
               </div>
             </section>
@@ -759,66 +784,10 @@ export default function Dashboard() {
 
         {/* TAB 3: ACHIEVEMENTS & BADGES */}
         {activeTab === 'badges' && (
-          <section>
-            <div style={{ marginBottom: 'var(--space-4)' }}>
-              <h3 style={{ fontFamily: 'var(--font-heading)', fontSize: 'var(--text-lg)', margin: 0 }}>
-                Platform Badges & Milestones
-              </h3>
-              <p style={{ fontSize: 'var(--text-sm)', color: 'var(--text-secondary)', marginTop: 'var(--space-1)' }}>
-                Earn badges by completing quizzes, sustaining daily streaks, and logging verified water savings.
-              </p>
-            </div>
-
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 'var(--space-4)' }}>
-              {badges.map((b) => {
-                const isUnlocked = userBadgeIds.has(b.slug)
-                const tierColor = b.tier === 'gold' ? '#f9a825' : b.tier === 'silver' ? '#78909c' : '#8d6e63'
-
-                return (
-                  <div
-                    key={b.slug}
-                    className="card"
-                    style={{
-                      padding: 'var(--space-5)',
-                      opacity: isUnlocked ? 1 : 0.65,
-                      border: isUnlocked ? `2px solid ${tierColor}` : '1px solid var(--surface-border)',
-                      background: isUnlocked ? 'var(--surface-base)' : 'var(--surface-raised)',
-                    }}
-                  >
-                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 'var(--space-2)' }}>
-                      <div
-                        style={{
-                          width: 36,
-                          height: 36,
-                          borderRadius: '50%',
-                          background: isUnlocked ? `${tierColor}20` : 'var(--color-neutral-200)',
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                          color: isUnlocked ? tierColor : 'var(--color-neutral-500)',
-                        }}
-                      >
-                        <Award size={20} />
-                      </div>
-                      <Badge variant={isUnlocked ? 'success' : 'neutral'}>
-                        {isUnlocked ? 'Unlocked' : 'Locked'}
-                      </Badge>
-                    </div>
-
-                    <h4 style={{ margin: 'var(--space-2) 0 0 0', fontSize: 'var(--text-base)', fontFamily: 'var(--font-heading)' }}>
-                      {b.name}
-                    </h4>
-                    <span style={{ fontSize: 'var(--text-xs)', color: tierColor, fontWeight: 600, textTransform: 'uppercase' }}>
-                      {b.tier} tier
-                    </span>
-                    <p style={{ fontSize: 'var(--text-xs)', color: 'var(--text-secondary)', marginTop: 'var(--space-2)', lineHeight: 'var(--leading-relaxed)' }}>
-                      {b.description}
-                    </p>
-                  </div>
-                )
-              })}
-            </div>
-          </section>
+          <AchievementWall
+            badges={badges}
+            userBadgeIds={userBadgeIds}
+          />
         )}
 
         {/* LOG ACTION MODAL */}
@@ -1014,6 +983,24 @@ export default function Dashboard() {
             </div>
           )}
         </Modal>
+
+        {/* LEVEL UP CELEBRATION MODAL */}
+        <LevelUpModal
+          isOpen={Boolean(levelUpData)}
+          onClose={() => setLevelUpData(null)}
+          level={levelUpData?.level || 1}
+          xp={levelUpData?.xp || 0}
+        />
+
+        {/* ACHIEVEMENT UNLOCK MODAL */}
+        <AchievementUnlockModal
+          isOpen={achievementModalOpen}
+          onClose={() => {
+            setAchievementModalOpen(false)
+            setNewBadgesToCelebrate([])
+          }}
+          badges={newBadgesToCelebrate}
+        />
       </div>
     </div>
   )

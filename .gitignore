@@ -48,3 +48,6 @@ coverage/
 # ─── Misc ─────────────────────────────────────────────────────────────────────
 *.local
 *.tsbuildinfo
+*.docx
+*.py
+extracted_reference_media/

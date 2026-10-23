@@ -1,3 +1,4 @@
+import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import {
   Droplets,
@@ -6,7 +7,12 @@ import {
   Zap,
   MapPin,
   BarChart3,
+  AlertTriangle,
+  Users,
+  CheckCircle2,
 } from 'lucide-react'
+import useAnimatedNumber from '../hooks/useAnimatedNumber.js'
+import api from '../services/api.js'
 
 const FEATURES = [
   {
@@ -43,7 +49,122 @@ const FEATURES = [
   },
 ]
 
+/**
+ * AnimatedStatNumber — Smoothly interpolates numeric values when available,
+ * or displays an honest placeholder ('—') when data is not yet available or null.
+ */
+function AnimatedStatNumber({ value, label }) {
+  const isNumeric = value !== null && value !== undefined && typeof value === 'number' && !isNaN(value)
+  const animated = useAnimatedNumber(isNumeric ? value : 0, { duration: 800 })
+
+  if (!isNumeric) {
+    return <span aria-label={`${label}: no data yet`}>—</span>
+  }
+
+  return (
+    <span aria-label={`${label}: ${value.toLocaleString()}`}>
+      {animated.toLocaleString()}
+    </span>
+  )
+}
+
 export default function Home() {
+  const [stats, setStats] = useState({
+    litresSaved: null,
+    reportsCount: null,
+    membersCount: null,
+    resolvedCount: null,
+  })
+
+  useEffect(() => {
+    let isCancelled = false
+
+    async function fetchCommunityGlance() {
+      try {
+        const [reportsRes, leaderboardRes] = await Promise.allSettled([
+          api.get('/reports', { params: { limit: 100, includeSample: true } }),
+          api.get('/game/leaderboard'),
+        ])
+
+        if (isCancelled) return
+
+        let reportsCount = null
+        let resolvedCount = null
+        let membersCount = null
+
+        if (reportsRes.status === 'fulfilled' && reportsRes.value?.data) {
+          const data = reportsRes.value.data
+          const reports = Array.isArray(data.reports) ? data.reports : []
+          reportsCount = typeof data.total === 'number' ? data.total : reports.length
+          resolvedCount = reports.filter((r) => r.status === 'resolved').length
+        }
+
+        if (leaderboardRes.status === 'fulfilled' && leaderboardRes.value?.data) {
+          const data = leaderboardRes.value.data
+          const users = Array.isArray(data.users) ? data.users : []
+          membersCount = typeof data.total === 'number' ? data.total : users.length
+        }
+
+        setStats({
+          litresSaved: null, // Honest: no cross-citizen household action aggregate endpoint exists
+          reportsCount,
+          membersCount,
+          resolvedCount,
+        })
+      } catch {
+        // Fallback gracefully — placeholders will be shown
+      }
+    }
+
+    fetchCommunityGlance()
+
+    return () => {
+      isCancelled = true
+    }
+  }, [])
+
+  const communityCards = [
+    {
+      id: 'litres-saved',
+      value: stats.litresSaved,
+      label: 'Litres saved',
+      note: 'Self-reported',
+      icon: Droplets,
+      iconColor: 'var(--color-primary-600)',
+      iconBg: 'var(--color-primary-50)',
+      accentColor: 'var(--color-primary-400)',
+    },
+    {
+      id: 'issues-reported',
+      value: stats.reportsCount,
+      label: 'Issues reported',
+      note: 'Community',
+      icon: AlertTriangle,
+      iconColor: '#d97706',
+      iconBg: '#fffbeb',
+      accentColor: '#f59e0b',
+    },
+    {
+      id: 'active-members',
+      value: stats.membersCount,
+      label: 'Active members',
+      note: 'Registered',
+      icon: Users,
+      iconColor: '#0284c7',
+      iconBg: '#f0f9ff',
+      accentColor: '#38bdf8',
+    },
+    {
+      id: 'issues-resolved',
+      value: stats.resolvedCount,
+      label: 'Issues resolved',
+      note: 'Verified',
+      icon: CheckCircle2,
+      iconColor: 'var(--color-success)',
+      iconBg: 'var(--color-success-bg)',
+      accentColor: '#4ade80',
+    },
+  ]
   return (
     <div className="page-enter">
       {/* ── Hero ────────────────────────────────────────────── */}
@@ -230,35 +351,105 @@ export default function Home() {
             </span>
           </p>
 
-          <div
-            style={{
-              display: 'grid',
-              gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))',
-              gap: 'var(--space-4)',
-              maxWidth: 720,
-              margin: '0 auto',
-            }}
-          >
-            {[
-              { value: '—',     label: 'Litres saved',     note: 'Self-reported' },
-              { value: '—',     label: 'Issues reported',  note: 'Community' },
-              { value: '—',     label: 'Active members',   note: 'Registered' },
-              { value: '—',     label: 'Issues resolved',  note: 'Verified' },
-            ].map(({ value, label, note }) => (
+          <div className="community-glance-grid">
+            {communityCards.map(({ id, value, label, note, icon: CardIcon, iconColor, iconBg, accentColor }) => (
               <div
-                key={label}
-                className="stat-card"
-                style={{ textAlign: 'center', alignItems: 'center' }}
+                key={id}
+                className="card interactive-card community-glance-card"
+                style={{
+                  padding: 'var(--space-5)',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  justifyContent: 'space-between',
+                  textAlign: 'left',
+                  borderRadius: 'var(--radius-lg)',
+                  border: '1px solid var(--surface-border)',
+                  background: 'var(--surface-base)',
+                  boxShadow: 'var(--shadow-sm)',
+                  minHeight: 154,
+                  position: 'relative',
+                  overflow: 'hidden',
+                }}
               >
-                <p
-                  className="stat-card-value"
-                  aria-label={`${label}: no data yet`}
-                  style={{ fontSize: 'var(--text-4xl)', color: 'var(--color-primary-600)' }}
+                {/* Header: Themed Icon & Preserved Status Badge */}
+                <div
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    gap: 'var(--space-2)',
+                    marginBottom: 'var(--space-4)',
+                  }}
                 >
-                  {value}
-                </p>
-                <p className="stat-card-label">{label}</p>
-                <span className="badge badge-sample">{note}</span>
+                  <div
+                    style={{
+                      width: 42,
+                      height: 42,
+                      borderRadius: 'var(--radius-md)',
+                      background: iconBg,
+                      color: iconColor,
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      flexShrink: 0,
+                    }}
+                    aria-hidden="true"
+                  >
+                    <CardIcon size={22} />
+                  </div>
+
+                  <span
+                    className="badge badge-sample"
+                    style={{
+                      fontSize: '11px',
+                      fontWeight: 600,
+                      letterSpacing: '0.02em',
+                    }}
+                  >
+                    {note}
+                  </span>
+                </div>
+
+                {/* Metric Value & Label */}
+                <div>
+                  <p
+                    className="stat-card-value"
+                    style={{
+                      fontSize: 'clamp(1.75rem, 3.5vw, var(--text-3xl))',
+                      color: 'var(--color-navy-900)',
+                      fontWeight: 800,
+                      lineHeight: 1.1,
+                      marginBottom: 'var(--space-1)',
+                    }}
+                  >
+                    <AnimatedStatNumber value={value} label={label} />
+                  </p>
+                  <p
+                    className="stat-card-label"
+                    style={{
+                      fontSize: 'var(--text-sm)',
+                      color: 'var(--text-secondary)',
+                      fontWeight: 500,
+                      margin: 0,
+                    }}
+                  >
+                    {label}
+                  </p>
+                </div>
+
+                {/* Subtle Accent Edge */}
+                <div
+                  style={{
+                    position: 'absolute',
+                    bottom: 0,
+                    left: 0,
+                    right: 0,
+                    height: 3,
+                    background: accentColor,
+                    opacity: 0.8,
+                  }}
+                  aria-hidden="true"
+                />
               </div>
             ))}
           </div>

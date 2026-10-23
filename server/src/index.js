@@ -18,6 +18,7 @@ import dotenv from 'dotenv'
 import cookieParser from 'cookie-parser'
 import helmet from 'helmet'
 import path from 'node:path'
+import fs from 'node:fs'
 
 import { validateEnv } from './config/env.js'
 import { connectDB, isConnected } from './config/db.js'
@@ -124,15 +125,38 @@ app.get('/api/v1/health', (_req, res) => {
   })
 })
 
-// Root path — brief API description
-app.get('/', (_req, res) => {
-  res.status(200).json({
-    message: 'AquaLoop API',
-    version: '0.2.1',
-    docs: 'See PLAN.md for the full API specification.',
-    health: '/api/v1/health',
-  })
+// ── Serve Frontend SPA in Production (if built) ───────────────
+const clientDistCandidates = [
+  path.resolve(process.cwd(), 'client', 'dist'),
+  path.resolve(process.cwd(), '..', 'client', 'dist'),
+]
+const clientDistPath = clientDistCandidates.find((p) => {
+  try {
+    return fs.existsSync(path.join(p, 'index.html'))
+  } catch {
+    return false
+  }
 })
+
+if (isProduction && clientDistPath) {
+  app.use(express.static(clientDistPath))
+  app.get('*', (req, res, next) => {
+    if (req.path.startsWith('/api') || req.path.startsWith('/uploads')) {
+      return next()
+    }
+    res.sendFile(path.join(clientDistPath, 'index.html'))
+  })
+} else {
+  // Root path — brief API description
+  app.get('/', (_req, res) => {
+    res.status(200).json({
+      message: 'AquaLoop API',
+      version: '0.2.1',
+      docs: 'See PLAN.md for the full API specification.',
+      health: '/api/v1/health',
+    })
+  })
+}
 
 // ── 404 handler ───────────────────────────────────────────────
 app.use((req, res) => {
